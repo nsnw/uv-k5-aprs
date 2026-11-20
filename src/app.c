@@ -17,6 +17,8 @@
 //                name in place of the frequency.
 //                After our own transmissions (beacon, messages, acks; not
 //                digipeats or KISS) a short beep, unless "TX beep" is off.
+//                "RX beep" (off by default): a low beep for a new station
+//                (NEW) or every new packet (ALL), not for digipeated copies.
 //   F (#)        message inbox (inbox.h); the status bar shows a blinking
 //                envelope while there are unread messages, and a new one
 //                beeps (unless turned off in the settings, "Msg beep")
@@ -342,6 +344,33 @@ static int AprsSelectedIndex(void)
         return i;
     uint8_t order[APRS_MAX_STATIONS];
     return ListOrder(order) ? order[0] : 0;      // nothing selected yet: the top row
+}
+
+// RX beep (station.h rx_beep): for a new station, or every new packet; not
+// for repeats (digipeated copies), our own packets coming back, or in KISS
+// mode (the host is the station).
+static bool RxBeepWanted(void)
+{
+    const uint8_t mode = STATION_Get()->rx_beep;
+    const AprsRxKind kind = APRS_LastRxKind();
+    if (mode == STATION_RX_BEEP_OFF || KISS_IsActive() || kind == APRS_RX_REPEAT
+        || (mode == STATION_RX_BEEP_NEW && kind != APRS_RX_NEW_STATION))
+        return false;
+    if (BEACON_IsConfigured()) {
+        const BeaconConfig *b = BEACON_Get();
+        char mine[10];
+        uint8_t n = 0;
+        for (int i = 0; i < 6 && b->call[i] && b->call[i] != ' '; i++) mine[n++] = b->call[i];
+        if (b->ssid) {
+            mine[n++] = '-';
+            if (b->ssid >= 10) mine[n++] = '1';
+            mine[n++] = (char)('0' + b->ssid % 10);
+        }
+        mine[n] = '\0';
+        if (!strcmp(APRS_GetStation(0)->source, mine))
+            return false;
+    }
+    return true;
 }
 
 static void ToggleListOrder(void)
@@ -970,13 +999,19 @@ void APP_Tick10ms(void)
     }
 
     APRS_Tick10ms();
-    if (APRS_TakeNewPacket()) {
+    const bool packet = APRS_TakeNewPacket();
+    if (packet) {
         WakeBacklight();
         sDirty = true;
     }
     if (MSG_TakeChanged())
         sDirty = true;
-    if (MSG_TakeNew()) {
+    const bool new_message = MSG_TakeNew();
+    if (packet && !new_message && RxBeepWanted()) {
+        Render();
+        BEEP_Received();               // ~150 ms: a digipeated copy right behind it may be missed
+    }
+    if (new_message) {
         static char note[4 + MSG_CALL_MAX + 1];
         strcpy(note, "MSG ");
         strcat(note, MSG_Get(0)->call);

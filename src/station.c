@@ -15,7 +15,8 @@ static bool Valid(const StationConfig *c)
         && c->txtail_flags >= 1 && c->txtail_flags <= 50
         && (c->flags & ~(STATION_DIGI | STATION_AUTOBEACON | STATION_MSG_QUIET | STATION_TX_QUIET)) == 0
         && c->digi_max_hops >= 1 && c->digi_max_hops <= 7
-        && c->beacon_interval_min >= 1 && c->beacon_interval_min <= 1440;
+        && c->beacon_interval_min >= 1 && c->beacon_interval_min <= 1440
+        && c->rx_beep <= STATION_RX_BEEP_ALL;
 }
 
 static void Save(void)

@@ -57,3 +57,10 @@ void BEEP_Sent(void)
     Tone(1800, 100);
     End();
 }
+
+void BEEP_Received(void)
+{
+    Begin();
+    Tone(700, 70);
+    End();
+}

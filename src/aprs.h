@@ -50,6 +50,12 @@ const AprsStation *APRS_GetStation(uint8_t index);   // 0 = most recently heard
 int      APRS_FindStation(const char *source);       // index or -1
 bool     APRS_TakeNewPacket(void);     // true once after each decoded packet
 
+// What the latest packet was, for the RX beep: a station not in the list (or
+// only from before power-off), a new packet from a known one, or a repeat
+// (the same position and comment within APRS_DIRECT_WINDOW_S: a digipeated copy).
+typedef enum { APRS_RX_REPEAT, APRS_RX_PACKET, APRS_RX_NEW_STATION } AprsRxKind;
+AprsRxKind APRS_LastRxKind(void);
+
 // "Directs= CALL CALL ...": stations heard direct in the last 30 minutes, for
 // the ?APRSD query (msg.c). Up to `size` - 1 characters.
 void APRS_FormatDirects(char *out, uint8_t size);

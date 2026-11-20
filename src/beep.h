@@ -12,5 +12,6 @@
 
 void BEEP_Message(void);           // new message: two rising tones
 void BEEP_Sent(void);              // we transmitted (beacon, message, ack): one short high tone
+void BEEP_Received(void);          // a packet came in (station.h rx_beep): one short low tone
 
 #endif

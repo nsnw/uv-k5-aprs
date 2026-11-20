@@ -19,6 +19,7 @@
 static bool        sActive;
 static bool        sReceiving;
 static bool        sNewPacket;
+static uint8_t     sRxKind;            // AprsRxKind of the latest packet
 static uint16_t    sTotal;
 static uint32_t    sTicks10ms;
 static uint8_t     sCount;
@@ -129,6 +130,7 @@ static void OnFrame(const uint8_t *frame, uint16_t len)
 
     // Find or create the station, then move it to the front.
     int idx = APRS_FindStation(source);
+    const bool known = idx >= 0 && !(sStations[idx].flags & APRS_ST_OLD);
     AprsStation st;
     if (idx >= 0) {
         st = sStations[idx];
@@ -140,6 +142,7 @@ static void OnFrame(const uint8_t *frame, uint16_t len)
     memmove(&sStations[1], &sStations[0], (size_t)idx * sizeof(AprsStation));
 
     const uint32_t now = APRS_NowSeconds();
+    const AprsStation before = st;
     char via[10];
     bool direct;
     APRS_FindVia(frame, len, via, sizeof via, &direct);
@@ -157,6 +160,14 @@ static void OnFrame(const uint8_t *frame, uint16_t len)
     st.packets++;
     APRS_Parse(frame, len, &st.info, st.comment, sizeof st.comment);
     sStations[0] = st;
+
+    if (!known)
+        sRxKind = APRS_RX_NEW_STATION;
+    else if (st.heard_s - before.heard_s <= APRS_DIRECT_WINDOW_S
+             && !memcmp(&st.info, &before.info, sizeof st.info) && !strcmp(st.comment, before.comment))
+        sRxKind = APRS_RX_REPEAT;
+    else
+        sRxKind = APRS_RX_PACKET;
 
     sTotal++;
     sNewPacket = true;
@@ -224,6 +235,8 @@ bool APRS_IsReceiving(void)      { return sReceiving; }
 uint16_t APRS_TotalDecoded(void) { return sTotal; }
 void APRS_Tick10ms(void)         { sTicks10ms++; }
 uint32_t APRS_NowSeconds(void)   { return sTicks10ms / 100; }
+
+AprsRxKind APRS_LastRxKind(void) { return (AprsRxKind)sRxKind; }
 
 bool APRS_TakeNewPacket(void)
 {

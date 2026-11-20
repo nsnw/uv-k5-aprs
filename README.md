@@ -44,6 +44,9 @@ them is new, and was mostly written by Claude (see [Yes, an AI wrote this](#yes-
   digipeater and TX timing, all from the keypad.
 - **A short beep** after each beacon, message, ack or query answer this station
   sends (not digipeated or KISS frames); **TX beep** in the settings turns it off.
+- **An optional receive beep** (**RX beep**, off by default): a short low tone
+  for each new station (`NEW`) or every new packet (`ALL`), but not for
+  digipeated copies of one just heard or your own packets coming back.
 - **A careful transmitter**: amateur bands only, only where the radio has a
   factory power calibration, calibrated low power, at most 3 s per frame,
   and only once the channel is clear (p-persistent CSMA).
@@ -112,7 +115,7 @@ heard direct in the last 30 minutes. At most one answer every 10 s.
 ### Settings (hold `MENU`)
 
 Memories, Callsign, SSID, Lat, Lon, Comment, Path, Auto beacon, Beacon every,
-Digipeater, Digi hops, Msg beep, TX beep, TX delay, TX tail.
+Digipeater, Digi hops, Msg beep, TX beep, RX beep, TX delay, TX tail.
 
 `UP`/`DOWN` move and change values, `MENU` edits and saves, `EXIT` cancels or
 closes. In **Memories**, `MENU` tunes to a memory, hold `MENU` stores the

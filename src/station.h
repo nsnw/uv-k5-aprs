@@ -16,6 +16,10 @@
 #define STATION_MSG_QUIET    (1u << 2)     // no beep for new messages (beep.h)
 #define STATION_TX_QUIET     (1u << 3)     // no beep after our own transmissions (txq.h)
 
+#define STATION_RX_BEEP_OFF  0
+#define STATION_RX_BEEP_NEW  1             // a station not heard yet (this session)
+#define STATION_RX_BEEP_ALL  2             // every new packet (not repeats of one just heard)
+
 typedef struct {
     uint32_t magic;
     uint8_t  txdelay_flags;        // 0x7E flags before each frame, 1..200 (6.67 ms each: 8 bits at 1200 baud)
@@ -23,7 +27,8 @@ typedef struct {
     uint8_t  flags;                // STATION_*
     uint8_t  digi_max_hops;        // largest n of WIDEn-N relayed, 1..7 (1 = fill-in, WIDE1-1 only)
     uint16_t beacon_interval_min;  // 1..1440
-    uint8_t  reserved[6];
+    uint8_t  rx_beep;              // STATION_RX_BEEP_*: beep for received packets
+    uint8_t  reserved[5];
 } StationConfig;
 
 _Static_assert(sizeof(StationConfig) == 16, "StationConfig must be two EEPROM pages");
