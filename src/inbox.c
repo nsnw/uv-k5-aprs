@@ -250,7 +250,8 @@ static void RenderMessage(const AprsMessage *m)
     const bool out = m->state != MSG_IN;
     strcpy(head, out ? "To " : "");
     strcat(head, m->call);
-    FormatAge(APRS_NowSeconds() - m->time_s, age);
+    if (m->old) strcpy(age, "old");                 // from before power-off
+    else        FormatAge(APRS_NowSeconds() - m->time_s, age);
     GFX_Text(1, 1, head);
     GFX_TextRight(LCD_WIDTH - 1, 1, age);
     GFX_InvertPage(1, 0, LCD_WIDTH - 1);

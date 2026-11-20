@@ -139,7 +139,7 @@ BeaconResult BEACON_Send(void)
         return BEACON_TX_REFUSED;
     static uint8_t frame[TX_MAX_FRAME];
     const uint16_t len = BEACON_BuildFrame(frame, sizeof frame);
-    return TXQ_Push(frame, len) ? BEACON_QUEUED : BEACON_QUEUE_FULL;
+    return TXQ_PushLocal(frame, len) ? BEACON_QUEUED : BEACON_QUEUE_FULL;
 #else
     return BEACON_TX_REFUSED;
 #endif

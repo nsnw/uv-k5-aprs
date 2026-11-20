@@ -490,11 +490,13 @@ def _show_station(st) -> None:
     hops = "fill-in, WIDE1-1 only" if st.digi_max_hops == 1 else f"WIDEn-N up to n = {st.digi_max_hops}"
     click.echo(f"digipeater   {'on' if st.digi else 'off'} ({hops})")
     click.echo(f"auto-beacon  {'on' if st.autobeacon else 'off'} (every {st.beacon_interval_min} min)")
+    click.echo(f"message beep {'on' if st.msg_beep else 'off'}")
+    click.echo(f"TX beep      {'on' if st.tx_beep else 'off'}")
 
 
 @cli.group()
 def config() -> None:
-    """Station options: TX timing, digipeater, auto-beacon (stored on the radio).
+    """Station options: TX timing, digipeater, auto-beacon, beeps (stored on the radio).
 
     \b
     The digipeater and auto-beacon use the callsign from `k5 beacon set`.
@@ -526,9 +528,12 @@ _ON_OFF = click.Choice(["on", "off"])
               help="Largest WIDEn-N to relay (1 = fill-in, WIDE1-1 only).")
 @click.option("--auto-beacon", type=_ON_OFF, help="Beacon automatically.")
 @click.option("--beacon-interval", type=click.IntRange(1, 1440), metavar="MIN", help="Minutes between beacons.")
+@click.option("--msg-beep", type=_ON_OFF, help="Beep when a message arrives.")
+@click.option("--tx-beep", type=_ON_OFF, help="Beep after our own transmissions (not digipeats or KISS).")
 @click.pass_context
 def config_set(ctx: click.Context, txdelay: float | None, txtail: float | None, digi: str | None,
-               digi_hops: int | None, auto_beacon: str | None, beacon_interval: int | None) -> None:
+               digi_hops: int | None, auto_beacon: str | None, beacon_interval: int | None,
+               msg_beep: str | None, tx_beep: str | None) -> None:
     """Change station options; anything not given stays as it is."""
     from .station import Station
     with _console(ctx) as k:
@@ -546,6 +551,10 @@ def config_set(ctx: click.Context, txdelay: float | None, txtail: float | None, 
                 st.autobeacon = auto_beacon == "on"
             if beacon_interval is not None:
                 st.beacon_interval_min = beacon_interval
+            if msg_beep is not None:
+                st.msg_beep = msg_beep == "on"
+            if tx_beep is not None:
+                st.tx_beep = tx_beep == "on"
             data = st.pack()
             reply = bytes.fromhex(k.command("o " + data.hex().upper(), "O").split()[1])
             if reply != data:   # a stale reply (e.g. delayed by a transmission): read again

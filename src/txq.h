@@ -16,6 +16,11 @@
 // The status icon shows T while a frame is on air. False if the queue is
 // full or the frame too long.
 bool TXQ_Push(const uint8_t *frame, uint16_t len);
+// The same for frames this station originates (beacon, messages, acks,
+// query answers), as opposed to digipeated or KISS frames: once one has been
+// sent, TXQ_TakeLocalSent() returns true (once), for the TX beep.
+bool TXQ_PushLocal(const uint8_t *frame, uint16_t len);
+bool TXQ_TakeLocalSent(void);
 void TXQ_Poll10ms(void);
 void TXQ_Clear(void);
 uint8_t TXQ_Count(void);

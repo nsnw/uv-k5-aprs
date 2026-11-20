@@ -52,22 +52,75 @@ void APRS_ConfigureChip(void)
 
 // ------------------------------------------------------------ decoding
 
-// Callsign of the last digipeater that marked the packet as repeated.
-static void FindVia(const uint8_t *frame, uint16_t len, char *out, uint8_t size)
+// WIDEn-N, TRACEn-N, RELAY, ...: path aliases, not stations.
+static bool IsAlias(const char *call)
+{
+    static const char *const ALIASES[] = { "WIDE", "TRACE", "RELAY", "ECHO", "GATE", "TEMP", "NOGATE", "RFONLY" };
+    for (uint8_t i = 0; i < sizeof ALIASES / sizeof ALIASES[0]; i++) {
+        const size_t n = strlen(ALIASES[i]);
+        if (!strncmp(call, ALIASES[i], n))
+            return true;
+    }
+    return false;
+}
+
+void APRS_FindVia(const uint8_t *frame, uint16_t len, char *out, uint8_t size, bool *direct)
 {
     out[0] = '\0';
-    uint16_t pos = 14;                       // first digipeater, if any
-    if (len < 14 || (frame[13] & 1))
+    *direct = true;
+    if (len < 14 || (frame[13] & 1))         // no digipeaters in the path
         return;
-    for (; pos + 7 <= len; pos += 7) {
+    char call[10];
+    for (uint16_t pos = 14; pos + 7 <= len; pos += 7) {
         if (frame[pos + 6] & 0x80) {         // H bit: has been repeated
+            *direct = false;
             // FormatSource reads the address at offset 7 of what it's given
-            AX25_FormatSource(frame + pos - 7, 14, out, size);
+            AX25_FormatSource(frame + pos - 7, 14, call, sizeof call);
+            if (!IsAlias(call)) {
+                strncpy(out, call, size - 1);
+                out[size - 1] = '\0';
+            }
         }
         if (frame[pos + 6] & 1)
             break;
     }
 }
+
+uint8_t APRS_StationCount(void)  { return sCount; }
+
+const AprsStation *APRS_GetStation(uint8_t index)
+{
+    return index < sCount ? &sStations[index] : NULL;
+}
+
+int APRS_FindStation(const char *source)
+{
+    for (uint8_t i = 0; i < sCount; i++)
+        if (strcmp(sStations[i].source, source) == 0)
+            return i;
+    return -1;
+}
+
+AprsStation *APRS_StationTable(uint8_t **count)
+{
+    *count = &sCount;
+    return sStations;
+}
+
+// Ages from before power-off are unknown (no clock): shown as "old".
+bool APRS_RestoreStation(AprsStation *st)
+{
+    if (!memchr(st->source, '\0', sizeof st->source) || !st->source[0]
+        || !memchr(st->via, '\0', sizeof st->via)
+        || !memchr(st->comment, '\0', sizeof st->comment))
+        return false;
+    st->flags    = (uint8_t)((st->flags & APRS_ST_DIRECT) | APRS_ST_OLD);
+    st->heard_s  = 0;
+    st->direct_s = 0;
+    return true;
+}
+
+#ifndef APRS_HOST_TEST
 
 static void OnFrame(const uint8_t *frame, uint16_t len)
 {
@@ -86,17 +139,30 @@ static void OnFrame(const uint8_t *frame, uint16_t len)
     }
     memmove(&sStations[1], &sStations[0], (size_t)idx * sizeof(AprsStation));
 
-    st.heard_s = APRS_NowSeconds();
+    const uint32_t now = APRS_NowSeconds();
+    char via[10];
+    bool direct;
+    APRS_FindVia(frame, len, via, sizeof via, &direct);
+    if (via[0])
+        memcpy(st.via, via, sizeof st.via);
+    if (direct) {
+        st.flags   |= APRS_ST_DIRECT;
+        st.direct_s = now;
+    } else if (!(st.flags & APRS_ST_DIRECT) || now - st.direct_s > APRS_DIRECT_WINDOW_S
+               || (st.flags & APRS_ST_OLD)) {
+        st.flags &= (uint8_t)~APRS_ST_DIRECT;   // not just a digipeated copy of a direct packet
+    }
+    st.flags  &= (uint8_t)~APRS_ST_OLD;
+    st.heard_s = now;
     st.packets++;
-    FindVia(frame, len, st.via, sizeof st.via);
     APRS_Parse(frame, len, &st.info, st.comment, sizeof st.comment);
     sStations[0] = st;
 
     sTotal++;
     sNewPacket = true;
 
-    DIGI_OnFrame(frame, len, APRS_NowSeconds());
-    MSG_OnFrame(frame, len, APRS_NowSeconds());
+    DIGI_OnFrame(frame, len, now);
+    MSG_OnFrame(frame, len, now);
 
     // Also pass it on over the programming cable: raw to a KISS host,
     // otherwise as a TNC2 text line.
@@ -156,22 +222,8 @@ void APRS_Enter(void)
 bool APRS_IsActive(void)         { return sActive; }
 bool APRS_IsReceiving(void)      { return sReceiving; }
 uint16_t APRS_TotalDecoded(void) { return sTotal; }
-uint8_t APRS_StationCount(void)  { return sCount; }
 void APRS_Tick10ms(void)         { sTicks10ms++; }
 uint32_t APRS_NowSeconds(void)   { return sTicks10ms / 100; }
-
-const AprsStation *APRS_GetStation(uint8_t index)
-{
-    return index < sCount ? &sStations[index] : NULL;
-}
-
-int APRS_FindStation(const char *source)
-{
-    for (uint8_t i = 0; i < sCount; i++)
-        if (strcmp(sStations[i].source, source) == 0)
-            return i;
-    return -1;
-}
 
 bool APRS_TakeNewPacket(void)
 {
@@ -179,3 +231,24 @@ bool APRS_TakeNewPacket(void)
     sNewPacket = false;
     return n;
 }
+
+void APRS_FormatDirects(char *out, uint8_t size)
+{
+    const uint32_t now = APRS_NowSeconds();
+    strncpy(out, "Directs=", size - 1);
+    out[size - 1] = '\0';
+    size_t n = strlen(out);
+    for (uint8_t i = 0; i < sCount; i++) {
+        const AprsStation *st = &sStations[i];
+        if (!(st->flags & APRS_ST_DIRECT) || (st->flags & APRS_ST_OLD) || now - st->direct_s > 30u * 60u)
+            continue;
+        const size_t k = strlen(st->source);
+        if (n + 1 + k >= size)
+            break;
+        out[n++] = ' ';
+        memcpy(out + n, st->source, k + 1);
+        n += k;
+    }
+}
+
+#endif  // APRS_HOST_TEST

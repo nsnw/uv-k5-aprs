@@ -2,8 +2,11 @@
 //
 // Split view: status, decode frequency and RSSI on top; the four most
 // recently heard stations below.
-//   UP / DOWN    select station
-//   MENU         station details: position, speed, altitude, path, comment
+//   UP / DOWN    select station. A dot before the callsign: heard direct.
+//   *            list order: most recent first (with the age) / nearest
+//                first (with distance and direction; needs our position)
+//   MENU         station details: position, distance and bearing, speed,
+//                altitude, path, comment
 //   hold MENU    settings (menu.h): digipeater, beacon, TX timing, SSID
 //   EXIT         (details) back to the split view
 //   0-9          type a new frequency: * = decimal point, EXIT = delete
@@ -12,8 +15,11 @@
 //   hold 0-9     recall that memory (memory.h; stored from the settings menu)
 //   hold EXIT    frequency / memory mode. Memory mode shows the memory's
 //                name in place of the frequency.
-//   F (#)        message inbox (inbox.h); the status bar shows an envelope
-//                while there are unread messages
+//                After our own transmissions (beacon, messages, acks; not
+//                digipeats or KISS) a short beep, unless "TX beep" is off.
+//   F (#)        message inbox (inbox.h); the status bar shows a blinking
+//                envelope while there are unread messages, and a new one
+//                beeps (unless turned off in the settings, "Msg beep")
 //   hold F (#)   queue our position beacon
 //   hold *       KISS TNC on/off on the programming cable (see kiss.h)
 //   SIDE1        digipeater on/off (digi.h)      } stored in EEPROM (station.h);
@@ -29,12 +35,14 @@
 #include "aprs.h"
 #include "battery.h"
 #include "beacon.h"
+#include "beep.h"
 #include "board.h"
 #include "channel.h"
 #include "console.h"
 #include "driver/bk4819.h"
 #include "driver/st7565.h"
 #include "driver/systick.h"
+#include "geo.h"
 #include "gfx.h"
 #include "input.h"
 #include "kiss.h"
@@ -45,6 +53,7 @@
 #include "radio.h"
 #include "settings.h"
 #include "station.h"
+#include "store.h"
 #include "tx.h"
 #include "txq.h"
 #include "version.h"
@@ -55,6 +64,7 @@
 #define SAVE_DELAY_TICKS    300   // store the frequency 3 s after the last change
 #define RSSI_TICKS          10    // 100 ms
 #define MESSAGE_TICKS       150   // 1.5 s
+#define NEW_MSG_TICKS       500   // 5 s for "MSG FROM-CALL"
 #define BATTERY_TICKS       50    // sample every 500 ms
 #define SPLASH_US           1000000
 
@@ -64,18 +74,20 @@ static uint16_t sBacklightTicks;
 static uint16_t sSaveTicks;      // 0 = nothing pending
 static uint32_t sSavedFrequency;
 static uint8_t  sSavedMemory;
+static uint8_t  sSavedListMode;
 static uint8_t  sRssiTicks;
 static int16_t  sRssi_dBm = -160;
 static char     sAprsSel[10];    // selected station's callsign ("" = first)
 static bool     sAprsDetail;     // details view instead of the list
 static uint8_t  sAprsTop;        // first station row shown in the list
 static const char *sMessage;
-static uint8_t  sMessageTicks;
+static uint16_t sMessageTicks;
 static bool     sDirty = true;
 static bool     sTransmitting;   // TX queue has the transmitter keyed
 static bool     sMenuKeyDown;    // MENU pressed in the APRS view: details on release, settings on hold
 static bool     sFKeyDown;       // F pressed: inbox on release, beacon on hold
 static bool     sExitHeld;       // EXIT pressed in the split view: hold = memory mode
+static bool     sStarKeyDown;    // * pressed (not typing): list order on release, KISS on hold
 
 // ---------------------------------------------------------------- helpers
 
@@ -88,12 +100,14 @@ static void U32ToDec(uint32_t v, char *out, uint8_t width)  // zero-padded
     out[width] = '\0';
 }
 
-static void ShowMessage(const char *msg)
+static void ShowMessageFor(const char *msg, uint16_t ticks)
 {
     sMessage      = msg;
-    sMessageTicks = MESSAGE_TICKS;
+    sMessageTicks = ticks;
     sDirty        = true;
 }
+
+static void ShowMessage(const char *msg) { ShowMessageFor(msg, MESSAGE_TICKS); }
 
 static void WakeBacklight(void)
 {
@@ -265,11 +279,81 @@ static void ToggleStation(uint8_t flag)
     }
 }
 
+// ---------------------------------------------------------------- station list order
+
+// Our position, if the beacon has one (distances need it).
+static bool OwnPosition(int32_t *lat, int32_t *lon)
+{
+    if (!BEACON_IsConfigured())
+        return false;
+    const BeaconConfig *b = BEACON_Get();
+    if (b->lat == 0 && b->lon == 0)
+        return false;
+    *lat = b->lat;
+    *lon = b->lon;
+    return true;
+}
+
+// Distance (m) and bearing to station i; false if it or we have no position.
+static bool StationDistance(const AprsStation *st, uint32_t *m, uint16_t *bearing)
+{
+    int32_t lat, lon;
+    if (!st->info.has_position || !OwnPosition(&lat, &lon))
+        return false;
+    *m = GEO_Distance(lat, lon, st->info.lat, st->info.lon, bearing);
+    return true;
+}
+
+static bool ByDistance(void)
+{
+    int32_t lat, lon;
+    return gSettings.list_by_distance && OwnPosition(&lat, &lon);
+}
+
+// Station indices in display order: most recently heard first, or nearest
+// first (stations without a position after those with one, by recency).
+static uint8_t ListOrder(uint8_t *order)
+{
+    const uint8_t n = APRS_StationCount();
+    uint32_t key[APRS_MAX_STATIONS];
+    const bool by_distance = ByDistance();
+    for (uint8_t i = 0; i < n; i++) {
+        uint16_t b;
+        order[i] = i;
+        key[i] = 0;
+        if (by_distance && !StationDistance(APRS_GetStation(i), &key[i], &b))
+            key[i] = UINT32_MAX;
+    }
+    for (uint8_t i = 1; i < n; i++) {            // insertion sort, stable
+        const uint8_t o = order[i];
+        uint8_t j = i;
+        for (; j > 0 && key[order[j - 1]] > key[o]; j--)
+            order[j] = order[j - 1];
+        order[j] = o;
+    }
+    return n;
+}
+
 // Selection follows the callsign, since the list reorders as packets arrive.
 static int AprsSelectedIndex(void)
 {
     const int i = APRS_FindStation(sAprsSel);
-    return i < 0 ? 0 : i;
+    if (i >= 0)
+        return i;
+    uint8_t order[APRS_MAX_STATIONS];
+    return ListOrder(order) ? order[0] : 0;      // nothing selected yet: the top row
+}
+
+static void ToggleListOrder(void)
+{
+    int32_t lat, lon;
+    if (!OwnPosition(&lat, &lon)) {
+        ShowMessage("NO POSITION SET");
+        return;
+    }
+    gSettings.list_by_distance = !gSettings.list_by_distance;
+    ShowMessage(gSettings.list_by_distance ? "NEAREST FIRST" : "LATEST FIRST");
+    sAprsTop = 0;
 }
 
 static void HandleKey(KeyEvent_t ev)
@@ -302,6 +386,22 @@ static void HandleKey(KeyEvent_t ev)
         } else if (ev.type == KEV_RELEASE && sFKeyDown) {
             sFKeyDown = false;
             INBOX_Open();
+        }
+        sDirty = true;
+        return;
+    }
+
+    // * (not typing a frequency): short press = list order on release,
+    // hold = KISS TNC on / off.
+    if (k == KEY_STAR && (sStarKeyDown || !sEntryLen)) {
+        if (ev.type == KEV_PRESS) {
+            sStarKeyDown = true;
+        } else if (ev.type == KEV_LONG && sStarKeyDown) {
+            sStarKeyDown = false;
+            if (KISS_IsActive()) KISS_Exit(); else KISS_Enter();
+        } else if (ev.type == KEV_RELEASE && sStarKeyDown) {
+            sStarKeyDown = false;
+            ToggleListOrder();
         }
         sDirty = true;
         return;
@@ -367,8 +467,6 @@ static void HandleKey(KeyEvent_t ev)
         ToggleStation(STATION_DIGI);
     } else if (k == KEY_SIDE2 && press) {
         ToggleStation(STATION_AUTOBEACON);
-    } else if (k == KEY_STAR && ev.type == KEV_LONG) {
-        if (KISS_IsActive()) KISS_Exit(); else KISS_Enter();
     } else if (k == KEY_EXIT && press) {
         sExitHeld   = !sAprsDetail;         // in the details view EXIT only goes back
         sAprsDetail = false;
@@ -376,11 +474,13 @@ static void HandleKey(KeyEvent_t ev)
         sExitHeld = false;
         ToggleMemoryMode();
     } else if (k == KEY_UP || k == KEY_DOWN) {
-        const int n   = APRS_StationCount();
-        int       sel = AprsSelectedIndex();
-        sel += (k == KEY_DOWN) ? 1 : -1;
-        if (n && sel >= 0 && sel < n)
-            memcpy(sAprsSel, APRS_GetStation((uint8_t)sel)->source, sizeof sAprsSel);
+        uint8_t order[APRS_MAX_STATIONS];
+        const int n = ListOrder(order), sel = AprsSelectedIndex();
+        int row = 0;
+        while (row < n && order[row] != sel) row++;
+        row += (k == KEY_DOWN) ? 1 : -1;
+        if (n && row >= 0 && row < n)
+            memcpy(sAprsSel, APRS_GetStation(order[row])->source, sizeof sAprsSel);
     }
     sDirty = true;
 }
@@ -508,55 +608,102 @@ static void AppendInt(char *buf, int32_t v, const char *suffix)
     strcat(buf, suffix);
 }
 
-// One row: callsign left, age right; optionally inverted.
-static void StationRow(uint8_t page, const AprsStation *st, bool selected)
+static void StationAge(const AprsStation *st, char *out)   // "12s" ... "2d", or "old"
 {
-    char age[8];
-    FormatAge(APRS_NowSeconds() - st->heard_s, age);
-    GFX_Text(1, page, st->source);
-    GFX_TextRight(LCD_WIDTH - 1, page, age);
+    if (st->flags & APRS_ST_OLD) strcpy(out, "old");
+    else                         FormatAge(APRS_NowSeconds() - st->heard_s, out);
+}
+
+// One row: a dot if heard direct, the callsign, and at the right the age or
+// (nearest-first order) distance and direction, dropping the direction if
+// that would run into the callsign. Optionally inverted.
+static void StationRow(uint8_t page, const AprsStation *st, bool selected, bool distance)
+{
+    if (st->flags & APRS_ST_DIRECT)
+        GFX_Text(0, page, GFX_ICON_DOT);
+    const uint8_t end = GFX_Text(5, page, st->source);
+    char right[16];
+    uint32_t m;
+    uint16_t b;
+    if (!distance) {
+        StationAge(st, right);
+    } else if (StationDistance(st, &m, &b)) {
+        GEO_FormatDistance(m, right);
+        const uint8_t n = (uint8_t)strlen(right);
+        right[n] = ' ';
+        strcpy(right + n + 1, GEO_Compass(b));
+        if (GFX_TextWidth(right) + end + 2 > LCD_WIDTH - 1)
+            right[n] = '\0';
+    } else {
+        strcpy(right, "--");
+    }
+    GFX_TextRight(LCD_WIDTH - 1, page, right);
     if (selected)
         GFX_InvertPage(page, 0, LCD_WIDTH - 1);
 }
 
 static void RenderAprsList(uint8_t first_page, uint8_t rows)
 {
-    const int n   = APRS_StationCount();
-    const int sel = AprsSelectedIndex();
-    if (sel < sAprsTop)
-        sAprsTop = (uint8_t)sel;
-    if (sel >= sAprsTop + rows)
-        sAprsTop = (uint8_t)(sel - rows + 1);
+    uint8_t order[APRS_MAX_STATIONS];
+    const int n = ListOrder(order), sel = AprsSelectedIndex();
+    const bool distance = ByDistance();
+    int row = 0;
+    while (row < n && order[row] != sel) row++;
+    if (row < sAprsTop)
+        sAprsTop = (uint8_t)row;
+    if (row >= sAprsTop + rows)
+        sAprsTop = (uint8_t)(row - rows + 1);
     for (uint8_t r = 0; r < rows && sAprsTop + r < n; r++)
-        StationRow(first_page + r, APRS_GetStation(sAprsTop + r), sAprsTop + r == sel);
+        StationRow(first_page + r, APRS_GetStation(order[sAprsTop + r]), sAprsTop + r == row, distance);
 }
 
+// Details: the callsign, symbol and age on top; then position (with the
+// distance and bearing from us at the right), speed / course / altitude,
+// how it was heard and the comment.
 static void RenderAprsDetail(const AprsStation *st)
 {
     char buf[32];
-    StationRow(2, st, true);
+    if (st->flags & APRS_ST_DIRECT)
+        GFX_Text(0, 2, GFX_ICON_DOT);
+    const uint8_t x = GFX_Text(5, 2, st->source);
+    StationAge(st, buf);
+    GFX_TextRight(LCD_WIDTH - 1, 2, buf);
 
-    char via[20] = "direct";
-    if (st->via[0]) {
-        strcpy(via, "via ");
+    char via[24] = "direct";
+    if (!(st->flags & APRS_ST_DIRECT)) {
+        strcpy(via, st->via[0] ? "via " : "via digipeater");
         strcat(via, st->via);
     }
 
     const AprsInfo *in = &st->info;
     if (!in->has_position) {
+        GFX_InvertPage(2, 0, LCD_WIDTH - 1);
         DrawWrapped(st->comment, 3, 6);
         GFX_Text(0, 7, via);
         return;
     }
+    buf[0] = in->symbol_table;   // APRS symbol, e.g. "/>" car, "/[" person
+    buf[1] = in->symbol;
+    buf[2] = '\0';
+    GFX_Text(x + 4, 2, buf);
+    GFX_InvertPage(2, 0, LCD_WIDTH - 1);
 
     APRS_FormatLat(in->lat, buf);
     GFX_Text(0, 3, buf);
     APRS_FormatLon(in->lon, buf);
     GFX_Text(0, 4, buf);
-    buf[0] = in->symbol_table;   // APRS symbol, e.g. "/>" car, "/[" person
-    buf[1] = in->symbol;
-    buf[2] = '\0';
-    GFX_TextRight(LCD_WIDTH, 3, buf);
+    uint32_t m;
+    uint16_t b;
+    if (StationDistance(st, &m, &b)) {
+        GEO_FormatDistance(m, buf);
+        GFX_TextRight(LCD_WIDTH, 3, buf);
+        buf[0] = (char)('0' + b / 100);          // "047 NE"
+        buf[1] = (char)('0' + b / 10 % 10);
+        buf[2] = (char)('0' + b % 10);
+        buf[3] = ' ';
+        strcpy(buf + 4, GEO_Compass(b));
+        GFX_TextRight(LCD_WIDTH, 4, buf);
+    }
 
     buf[0] = '\0';
     if (in->speed_kmh != APRS_UNKNOWN_I16)
@@ -663,7 +810,7 @@ static void DrawStatusBar(void)
 #endif
     DrawStatusIcon(66, STATION_Get()->flags, can_tx);
     DrawSpeaker(88);
-    if (MSG_Unread()) {                // envelope: unread messages (F opens the inbox)
+    if (MSG_Unread() && (APRS_NowSeconds() & 1)) {   // blinking envelope: unread messages (F opens the inbox)
         static const uint8_t ENVELOPE[9] = { 0x7F, 0x43, 0x45, 0x49, 0x51, 0x49, 0x45, 0x43, 0x7F };
         memcpy(&gFrameBuffer[0][101], ENVELOPE, sizeof ENVELOPE);
     }
@@ -777,6 +924,7 @@ void APP_Init(void)
     CheckMemoryMode();
     sSavedFrequency = gSettings.frequency;
     sSavedMemory    = gSettings.memory;
+    sSavedListMode  = gSettings.list_by_distance;
     Render();
 }
 
@@ -794,6 +942,8 @@ void APP_Tick10ms(void)
     else
         CONSOLE_Poll();
     TXQ_Poll10ms();
+    if (TXQ_TakeLocalSent() && !(STATION_Get()->flags & STATION_TX_QUIET))
+        BEEP_Sent();                   // our beacon / message / ack went out (not digipeats, KISS)
     MENU_Tick10ms();
     INBOX_Tick10ms();
     RADIO_Poll();
@@ -830,14 +980,19 @@ void APP_Tick10ms(void)
         static char note[4 + MSG_CALL_MAX + 1];
         strcpy(note, "MSG ");
         strcat(note, MSG_Get(0)->call);
-        ShowMessage(note);
+        ShowMessageFor(note, NEW_MSG_TICKS);
         WakeBacklight();
+        if (!(STATION_Get()->flags & STATION_MSG_QUIET)) {
+            Render();                  // the note first, then the beep (blocks ~300 ms)
+            BEEP_Message();
+        }
     }
     static uint32_t lastSecond;
     if (APRS_NowSeconds() != lastSecond) {
         lastSecond = APRS_NowSeconds();   // keep the "heard ... ago" ages current
         BEACON_Poll1s(lastSecond);
         MSG_Poll1s(lastSecond);
+        STORE_Poll1s(lastSecond);
         sDirty = true;
     }
     static bool lastReceiving;
@@ -856,13 +1011,16 @@ void APP_Tick10ms(void)
 
     // Remember the frequency (keys, console or KISS), once it has settled.
     CheckMemoryMode();
-    if (gSettings.frequency != sSavedFrequency || gSettings.memory != sSavedMemory) {
+    if (gSettings.frequency != sSavedFrequency || gSettings.memory != sSavedMemory
+        || gSettings.list_by_distance != sSavedListMode) {
         sSavedFrequency = gSettings.frequency;
         sSavedMemory    = gSettings.memory;
+        sSavedListMode  = gSettings.list_by_distance;
         sSaveTicks      = SAVE_DELAY_TICKS;
     }
     if (sSaveTicks && --sSaveTicks == 0)
         SETTINGS_Save();
+    STORE_Poll10ms(APRS_IsReceiving());   // messages / stations to EEPROM, a page at a time
 
     if (sDirty) {
         sDirty = false;

@@ -32,12 +32,14 @@ SRCS := \
 	src/aprs_parse.c \
 	src/battery.c \
 	src/beacon.c \
+	src/beep.c \
 	src/ax25.c \
 	src/board.c \
 	src/channel.c \
 	src/console.c \
 	src/digi.c \
 	src/font.c \
+	src/geo.c \
 	src/gfx.c \
 	src/hdlc_tx.c \
 	src/input.c \
@@ -46,6 +48,7 @@ SRCS := \
 	src/main.c \
 	src/radio.c \
 	src/settings.c \
+	src/store.c \
 	src/memory.c \
 	src/menu.c \
 	src/msg.c \

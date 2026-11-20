@@ -21,20 +21,29 @@ them is new, and was mostly written by Claude (see [Yes, an AI wrote this](#yes-
 
 - **Receive APRS** (1200 baud AFSK) on any frequency in the bands above. The
   default is 144.390 MHz (North America), and the last frequency is remembered.
-- **Station list**: the 16 most recently heard stations, with position, speed,
-  course, altitude, path and comment.
+- **Station list**: the 16 most recently heard stations, with position,
+  distance and direction from you, speed, course, altitude, path and comment.
+  Sort it by time or by distance; stations heard direct are marked, and the
+  details name the digipeater you heard the others through.
 - **Position beacon**: on demand, or automatically every 1–1440 minutes.
 - **Digipeater**: WIDEn-N (New-N paradigm) up to a set number of hops, or
   fill-in only (WIDE1-1), with duplicate suppression.
 - **Messages**: received messages are acked automatically, including
-  reply-acks and messages relayed by IGates. Send and reply from the keypad;
-  unacknowledged messages are retried every 30 s, up to 5 times. Inbox of 8.
+  reply-acks and messages relayed by IGates, and announced with a beep. Send
+  and reply from the keypad; unacknowledged messages are retried every 30 s,
+  up to 5 times. Inbox of 8.
+- **Queries**: answers the standard directed queries sent as messages:
+  `?APRSP` (position), `?APRSS` (status), `?APRST` / `?PING?` (route trace)
+  and `?APRSD` (stations heard direct).
+- **Remembers** the inbox and the station list across power-off.
 - **KISS TNC** on the programming cable for APRS programs (Xastir, YAAC,
   APRSIS32, …); `k5 kiss serve` turns it into a KISS-over-TCP server.
 - **10 memories** with 6-character names, and a memory mode that shows the
   name instead of the frequency.
 - **On-radio settings**: callsign, SSID, position, comment, path, beacon,
   digipeater and TX timing, all from the keypad.
+- **A short beep** after each beacon, message, ack or query answer this station
+  sends (not digipeated or KISS frames); **TX beep** in the settings turns it off.
 - **A careful transmitter**: amateur bands only, only where the radio has a
   factory power calibration, calibrated low power, at most 3 s per frame,
   and only once the channel is clear (p-persistent CSMA).
@@ -48,12 +57,16 @@ The status bar along the top shows:
   it's on but the current frequency can't transmit.
 - a speaker: sound waves while receiving or monitoring, crossed out when idle,
   inverted while transmitting
-- an envelope while there are unread messages
+- a blinking envelope while there are unread messages
 - the battery
 
 Below it are the frequency (or the memory's name in memory mode), a signal
-meter and the stations heard. Key hints show `MENU` and `EXIT` as small
-inverted **M** and **E** icons.
+meter and the stations heard. A dot before a callsign means it was heard
+direct, not through a digipeater. At the right of each row is how long ago it
+was heard, or, sorted by distance, how far away it is and in which direction
+(`12.4km NE`). Stations and messages from before the radio was switched off
+show their age as `old`: there's no clock while it's off. Key hints show
+`MENU` and `EXIT` as small inverted **M** and **E** icons.
 
 ## Keys
 
@@ -65,7 +78,8 @@ inverted **M** and **E** icons.
 | hold `0`–`9` | Go to that memory |
 | hold `EXIT` | Switch between frequency and memory mode |
 | `UP` / `DOWN` | Select a station |
-| `MENU` | Station details (`EXIT` goes back) |
+| `*` | Sort the stations by time (newest first) or by distance (nearest first; needs your position) |
+| `MENU` | Station details: position, distance and bearing, speed, altitude, how it was heard, comment (`EXIT` goes back) |
 | hold `MENU` | Settings |
 | `F` (`#`) | Messages |
 | hold `F` | Send your position beacon now |
@@ -88,11 +102,17 @@ PTT never transmits: everything APRSK5 sends is an APRS packet.
 
 In the list, `*` marks unread messages. Sent messages show `>` while waiting
 for an ack, `+` once delivered and `x` if there was no ack or it was rejected.
+A new message beeps twice (turn it off with **Msg beep** in the settings).
+
+Queries aren't stored: `?APRSP` sends your position beacon, `?APRSS` a status
+packet with your beacon comment (or the firmware version), `?APRST` and
+`?PING?` reply with the path the query took, and `?APRSD` with the stations
+heard direct in the last 30 minutes. At most one answer every 10 s.
 
 ### Settings (hold `MENU`)
 
 Memories, Callsign, SSID, Lat, Lon, Comment, Path, Auto beacon, Beacon every,
-Digipeater, Digi hops, TX delay, TX tail.
+Digipeater, Digi hops, Msg beep, TX beep, TX delay, TX tail.
 
 `UP`/`DOWN` move and change values, `MENU` edits and saves, `EXIT` cancels or
 closes. In **Memories**, `MENU` tunes to a memory, hold `MENU` stores the
@@ -140,8 +160,9 @@ With a native `arm-none-eabi-gcc` and `python3 -m pip install crcmod`, plain
 `make` works too. `./build.sh ENABLE_TX=0` builds a receive-only firmware that
 never keys the transmitter. The version number is set in the `Makefile`.
 
-The host tests (decoder/encoder loopback, digipeater, KISS, messages, menu,
-beacon) run with the system C compiler: `test/run.sh`.
+The host tests (decoder/encoder loopback, digipeater, KISS, messages and
+queries, menu, beacon, distance/bearing, EEPROM storage) run with the system
+C compiler: `test/run.sh`.
 
 ## Tools
 
@@ -175,13 +196,18 @@ python3 -m venv .venv && .venv/bin/pip install -e tools
 | `0x0010`–`0x004F` | Beacon: callsign, SSID, symbol, position, path, comment |
 | `0x0050`–`0x005F` | Station: TX delay and tail, digipeater, beacon interval |
 | `0x0060`–`0x00FF` | 10 memories |
+| `0x0100`–`0x04FF` | Message inbox |
+| `0x0500`–`0x0BFF` | Station list |
 | `0x1E00`–`0x1FFF` | Factory calibration (read only) |
 
 ## Notes
 
 - Packets go to the destination `APZK5M`. `APZ` is APRS's experimental range;
   a registered tocall would come from [aprs-deviceid](https://github.com/aprsorg/aprs-deviceid).
-- Messages are kept in RAM, so they're lost when the radio is switched off.
+- The station list is saved at most every 5 minutes, to spare the EEPROM
+  (about a million writes per page), so the last few minutes can be lost at
+  power-off. Messages are saved within seconds.
+- Distances use a flat-earth approximation: within about 1% at VHF/UHF ranges.
 
 ## Yes, an AI wrote this
 

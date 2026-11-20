@@ -8,7 +8,7 @@ from dataclasses import dataclass
 MAGIC = 0x3153354B          # "K5S1"
 FORMAT = "<IBBBBH6x"
 assert struct.calcsize(FORMAT) == 16
-DIGI, AUTOBEACON = 0x01, 0x02
+DIGI, AUTOBEACON, MSG_QUIET, TX_QUIET = 0x01, 0x02, 0x04, 0x08
 FLAG_MS = 8 / 1.2           # one 0x7E flag at 1200 baud
 
 
@@ -20,6 +20,8 @@ class Station:
     autobeacon: bool = False
     digi_max_hops: int = 2
     beacon_interval_min: int = 30
+    msg_beep: bool = True           # beep for new messages (stored inverted: MSG_QUIET)
+    tx_beep: bool = True            # beep after our own transmissions (stored inverted: TX_QUIET)
 
     def validate(self) -> None:
         if not 1 <= self.txdelay_flags <= 200:
@@ -33,7 +35,8 @@ class Station:
 
     def pack(self) -> bytes:
         self.validate()
-        flags = (DIGI if self.digi else 0) | (AUTOBEACON if self.autobeacon else 0)
+        flags = ((DIGI if self.digi else 0) | (AUTOBEACON if self.autobeacon else 0)
+                 | (0 if self.msg_beep else MSG_QUIET) | (0 if self.tx_beep else TX_QUIET))
         return struct.pack(FORMAT, MAGIC, self.txdelay_flags, self.txtail_flags, flags,
                            self.digi_max_hops, self.beacon_interval_min)
 
@@ -42,7 +45,8 @@ class Station:
         magic, delay, tail, flags, hops, interval = struct.unpack(FORMAT, data)
         if magic != MAGIC:
             raise ValueError("not a station configuration")
-        return cls(delay, tail, bool(flags & DIGI), bool(flags & AUTOBEACON), hops, interval)
+        return cls(delay, tail, bool(flags & DIGI), bool(flags & AUTOBEACON), hops, interval,
+                   not flags & MSG_QUIET, not flags & TX_QUIET)
 
     @staticmethod
     def ms_to_flags(ms: float) -> int:

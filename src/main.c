@@ -11,6 +11,7 @@
 #include "settings.h"
 #include "memory.h"
 #include "station.h"
+#include "store.h"
 #include "version.h"
 
 static volatile uint32_t sTicks;   // 10 ms ticks since boot
@@ -34,6 +35,7 @@ void Main(void)
     BEACON_Load();
     STATION_Load();
     MEM_Load();
+    STORE_Load();       // messages and the station list from before power-off
     RADIO_Init();
     APP_Init();
 

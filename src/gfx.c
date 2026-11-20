@@ -17,9 +17,10 @@ static const uint8_t KEY_ICONS[2][7] = {
     { 0x7F, 0x41, 0x7B, 0x77, 0x7B, 0x41, 0x7F },   // M
     { 0x7F, 0x41, 0x55, 0x55, 0x55, 0x5D, 0x7F },   // E
 };
+static const uint8_t DOT_ICON[3] = { 0x1C, 0x1C, 0x1C };   // GFX_ICON_DOT: 3 x 3, centred
 
 static bool    IsKey(char c)     { return c >= 1 && c <= (char)(sizeof KEY_ICONS / sizeof KEY_ICONS[0]); }
-static uint8_t CharWidth(char c) { return IsKey(c) ? 8 : GFX_CHAR_W + 1; }
+static uint8_t CharWidth(char c) { return IsKey(c) ? 8 : c == GFX_ICON_DOT[0] ? 4 : GFX_CHAR_W + 1; }
 
 uint8_t GFX_Text(uint8_t x, uint8_t page, const char *s)
 {
@@ -33,6 +34,8 @@ uint8_t GFX_Text(uint8_t x, uint8_t page, const char *s)
             if (x + sizeof KEY_ICONS[0] > LCD_WIDTH)
                 break;
             memcpy(&gFrameBuffer[page][x], KEY_ICONS[c - 1], sizeof KEY_ICONS[0]);
+        } else if (c == GFX_ICON_DOT[0]) {
+            memcpy(&gFrameBuffer[page][x], DOT_ICON, sizeof DOT_ICON);
         } else if (c > ' ' && c <= '~') {
             memcpy(&gFrameBuffer[page][x], gFontSmall[c - '!'], GFX_CHAR_W);
         }

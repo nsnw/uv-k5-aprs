@@ -123,6 +123,44 @@ int main(void)
     CHECK(!MSG_Send("N0CALL", "x", 7200) && MSG_Count() == before, "send refused, not stored");
     sTxFail = false;
 
+    // queries: answered (MSG_TakeQuery), not stored; retries acked but answered once
+    MSG_TakeQuery();
+    uint8_t n = MSG_Count();
+    CHECK(!Feed("W1AW", ":VE6CXZ-1 :?APRSP{12", 8000, ack) && !strcmp(ack, "12"), "?APRSP acked, not stored");
+    CHECK(MSG_Count() == n && MSG_TakeQuery() == MSG_QUERY_POSITION, "position query");
+    CHECK(MSG_TakeQuery() == MSG_QUERY_NONE, "taken once");
+    Feed("W1AW", ":VE6CXZ-1 :?APRSP{12", 8030, ack);
+    CHECK(!strcmp(ack, "12") && MSG_TakeQuery() == MSG_QUERY_NONE, "retry: acked again, not answered again");
+    Feed("K1ABC", ":VE6CXZ-1 :?APRSS", 8040, ack);
+    CHECK(ack[0] == 0 && MSG_TakeQuery() == MSG_QUERY_STATUS, "status query without a number");
+    Feed("K1ABC", ":VE6CXZ-1 :?APRST", 8045, ack);
+    CHECK(MSG_TakeQuery() == MSG_QUERY_NONE, "within MSG_QUERY_GAP_S of the last answer: ignored");
+    Feed("K1ABC", ":VE6CXZ-1 :?PING?", 8060, ack);
+    CHECK(MSG_TakeQuery() == MSG_QUERY_TRACE, "?PING? is a route trace");
+    Feed("K1ABC", ":VE6CXZ-1 :?APRSD{3", 8080, ack);
+    CHECK(MSG_TakeQuery() == MSG_QUERY_DIRECT && MSG_Count() == n, "?APRSD");
+    CHECK(Feed("K1ABC", ":VE6CXZ-1 :?APRSPX", 8100, ack) && MSG_TakeQuery() == MSG_QUERY_NONE,
+          "not quite a query: stored as a message");
+    CHECK(Feed("K1ABC", ":VE6CXZ-1 :? are you there", 8120, ack), "a question is a message");
+    CHECK(!Feed("K1ABC", ":W1AW     :?APRSP", 8140, ack) && MSG_TakeQuery() == MSG_QUERY_NONE,
+          "someone else's query");
+
+    // restoring from EEPROM: old, unknown age, sending -> failed, ids carry on
+    AprsMessage m;
+    memset(&m, 0, sizeof m);
+    strcpy(m.call, "N0CALL"); strcpy(m.text, "hi"); strcpy(m.id, "41");
+    m.state = MSG_SENDING; m.time_s = 1234; m.unread = true;
+    CHECK(MSG_RestoreMessage(&m) && m.old && m.state == MSG_FAILED && m.time_s == 0 && !m.unread,
+          "restored sending message");
+    MSG_Send("N0CALL", "next", 9000);
+    CHECK(!strcmp(sTxText, "next{42"), "numbering continues after the restored ids ('%s')", sTxText);
+    m.state = MSG_IN; m.unread = true;
+    CHECK(MSG_RestoreMessage(&m) && m.unread, "unread stays unread");
+    m.state = 9;
+    CHECK(!MSG_RestoreMessage(&m), "bad state dropped");
+    m.state = MSG_IN; memset(m.call, 'A', sizeof m.call);
+    CHECK(!MSG_RestoreMessage(&m), "unterminated callsign dropped");
+
     printf("%d passed, %d failed\n", sPass, sFail);
     return sFail != 0;
 }

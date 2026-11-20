@@ -13,6 +13,8 @@
 
 #define STATION_DIGI         (1u << 0)     // digipeater on
 #define STATION_AUTOBEACON   (1u << 1)     // beacon every beacon_interval_min
+#define STATION_MSG_QUIET    (1u << 2)     // no beep for new messages (beep.h)
+#define STATION_TX_QUIET     (1u << 3)     // no beep after our own transmissions (txq.h)
 
 typedef struct {
     uint32_t magic;

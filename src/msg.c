@@ -3,9 +3,12 @@
 #include "msg.h"
 
 #ifndef MSG_HOST_TEST
+#include "aprs.h"
+#include "ax25.h"
 #include "beacon.h"
 #include "kiss.h"
 #include "settings.h"
+#include "version.h"
 #ifdef ENABLE_TX
 #include "tx.h"
 #include "txq.h"
@@ -22,6 +25,9 @@ static AprsMessage sInbox[MSG_INBOX];   // newest first
 static uint8_t     sCount;
 static bool        sNew, sChanged;
 static uint16_t    sNextId = 1;
+static MsgQuery    sQuery;
+static uint32_t    sQueryAnswered_s;
+static bool        sQueryAnsweredOnce;
 
 // Sends one copy of ":TO       :text" (radio build: msg.c below; host test: stub).
 #ifdef MSG_HOST_TEST
@@ -242,6 +248,20 @@ bool MSG_HandleInfo(const char *from, const char *info, uint16_t n, const char *
     while (text_len && (text[text_len - 1] == ' ' || text[text_len - 1] == '\r' || text[text_len - 1] == '\n'))
         text_len--;
 
+    // a query? ("?APRSP", "?PING?"; anything else starting with '?' is a message)
+    static const struct { const char *text; MsgQuery q; } QUERIES[] = {
+        { "?APRSP", MSG_QUERY_POSITION }, { "?APRSS", MSG_QUERY_STATUS },
+        { "?APRST", MSG_QUERY_TRACE },    { "?PING?", MSG_QUERY_TRACE },
+        { "?APRSD", MSG_QUERY_DIRECT },
+    };
+    MsgQuery query = MSG_QUERY_NONE;
+    for (uint8_t i = 0; i < sizeof QUERIES / sizeof QUERIES[0]; i++) {
+        const uint16_t k = (uint16_t)strlen(QUERIES[i].text);
+        if (text_len >= k && !memcmp(text, QUERIES[i].text, k)
+            && (text_len == k || text[k] == ' '))
+            query = QUERIES[i].q;
+    }
+
     uint32_t h = Fnv(2166136261u, from, (uint16_t)strlen(from));
     h = ack_id[0] ? Fnv(h ^ 0x5A, ack_id, (uint16_t)strlen(ack_id)) : Fnv(h ^ 0xA5, text, text_len);
     uint32_t age_s;
@@ -250,7 +270,47 @@ bool MSG_HandleInfo(const char *from, const char *info, uint16_t n, const char *
             ack_id[0] = '\0';
         return false;
     }
+    if (query != MSG_QUERY_NONE) {          // answered (msg.c below), not stored
+        if (!sQueryAnsweredOnce || now_s - sQueryAnswered_s >= MSG_QUERY_GAP_S) {
+            sQuery             = query;
+            sQueryAnswered_s   = now_s;
+            sQueryAnsweredOnce = true;
+        }
+        return false;
+    }
     Store(from, text, text_len, now_s);
+    return true;
+}
+
+MsgQuery MSG_TakeQuery(void)
+{
+    const MsgQuery q = sQuery;
+    sQuery = MSG_QUERY_NONE;
+    return q;
+}
+
+// ---------------------------------------------------------------- EEPROM (store.h)
+
+AprsMessage *MSG_Table(uint8_t **count)
+{
+    *count = &sCount;
+    return sInbox;
+}
+
+bool MSG_RestoreMessage(AprsMessage *m)
+{
+    if (!memchr(m->call, '\0', sizeof m->call) || !m->call[0]
+        || !memchr(m->text, '\0', sizeof m->text) || !memchr(m->id, '\0', sizeof m->id)
+        || m->state > MSG_FAILED)
+        return false;
+    if (m->state == MSG_SENDING)            // the retries stopped at power-off
+        m->state = MSG_FAILED;
+    m->time_s = m->next_s = 0;
+    m->old    = true;
+    uint16_t id = 0;                        // number new messages after the restored ones
+    for (const char *p = m->id; *p >= '0' && *p <= '9'; p++) id = (uint16_t)(id * 10 + (*p - '0'));
+    if (id >= sNextId && id < 9999) sNextId = (uint16_t)(id + 1);
+    m->unread = m->unread && m->state == MSG_IN;
     return true;
 }
 
@@ -297,8 +357,8 @@ static uint8_t *PutAddress(uint8_t *p, const char *call, uint8_t ssid, bool last
     return p;
 }
 
-// ":TO       :text" from MYCALL, with the beacon's digipeater path.
-static bool Transmit(const char *to, const char *text)
+// One frame from MYCALL with the beacon's digipeater path and this info field.
+static bool TransmitInfo(const char *info1, const char *info2)
 {
     if (!BEACON_IsConfigured() || !TX_IsAllowedFrequency(gSettings.frequency))
         return false;
@@ -311,13 +371,54 @@ static bool Transmit(const char *to, const char *text)
     if (b->path_hops >= 2) p = PutAddress(p, "WIDE2", 1, true);
     *p++ = 0x03;
     *p++ = 0xF0;
-    *p++ = ':';
+    for (const char *t = info1; *t && p < frame + sizeof frame; t++) *p++ = (uint8_t)*t;
+    for (const char *t = info2; *t && p < frame + sizeof frame; t++) *p++ = (uint8_t)*t;
+    return TXQ_PushLocal(frame, (uint16_t)(p - frame));
+}
+
+// ":TO       :text"
+static bool Transmit(const char *to, const char *text)
+{
+    char head[12];
     uint8_t k = 0;
-    for (; to[k] && k < 9; k++) *p++ = (uint8_t)to[k];
-    for (; k < 9; k++) *p++ = ' ';
-    *p++ = ':';
-    for (const char *t = text; *t && p < frame + sizeof frame; t++) *p++ = (uint8_t)*t;
-    return TXQ_Push(frame, (uint16_t)(p - frame));
+    head[0] = ':';
+    for (; to[k] && k < 9; k++) head[1 + k] = to[k];
+    for (; k < 9; k++) head[1 + k] = ' ';
+    head[10] = ':';
+    head[11] = '\0';
+    return TransmitInfo(head, text);
+}
+
+// Answers a directed query (MsgQuery) from `from`; `frame` is the query as heard.
+static void AnswerQuery(MsgQuery q, const char *from, const uint8_t *frame, uint16_t len)
+{
+    char text[MSG_TEXT_MAX + 1];
+    switch (q) {
+    case MSG_QUERY_POSITION:
+        BEACON_Send();
+        break;
+    case MSG_QUERY_STATUS: {
+        const char *c = BEACON_Get()->comment;
+        TransmitInfo(">", c[0] ? c : APP_NAME " " VERSION_STRING);
+        break;
+    }
+    case MSG_QUERY_TRACE: {                 // "SRC>DEST,DIGI*,WIDE2*": the header as heard
+        static char line[AX25_MAX_FRAME + 64];
+        AX25_FormatTNC2(frame, len, line, sizeof line);
+        char *colon = strchr(line, ':');
+        if (colon) *colon = '\0';
+        strncpy(text, line, MSG_TEXT_MAX);
+        text[MSG_TEXT_MAX] = '\0';
+        Transmit(from, text);
+        break;
+    }
+    case MSG_QUERY_DIRECT:
+        APRS_FormatDirects(text, sizeof text);
+        Transmit(from, text);
+        break;
+    default:
+        break;
+    }
 }
 #else
 static bool Transmit(const char *to, const char *text) { (void)to; (void)text; return false; }
@@ -353,12 +454,17 @@ void MSG_OnFrame(const uint8_t *frame, uint16_t len, uint32_t now_s)
     char mycall[MSG_CALL_MAX + 1], ack_id[6];
     MyCall(mycall);
     MSG_HandleInfo(from, info, n, mycall, now_s, ack_id);
+    const MsgQuery query = MSG_TakeQuery();
 #ifdef ENABLE_TX
     if (ack_id[0]) {                        // every copy is acked: the last ack may have been lost
         char ack[9] = "ack";
         strcpy(ack + 3, ack_id);
         Transmit(from, ack);
     }
+    if (query != MSG_QUERY_NONE)
+        AnswerQuery(query, from, frame, len);
+#else
+    (void)query;
 #endif
 }
 

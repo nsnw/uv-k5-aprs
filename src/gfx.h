@@ -10,6 +10,7 @@
 // boxes one pixel wider than a character, e.g. GFX_KEY_MENU " REPLY".
 #define GFX_KEY_MENU "\x01"
 #define GFX_KEY_EXIT "\x02"
+#define GFX_ICON_DOT "\x03"   // a small centred dot, 4 px wide: "heard direct"
 
 void    GFX_Clear(void);
 uint8_t GFX_Text(uint8_t x, uint8_t page, const char *s);        // returns next x

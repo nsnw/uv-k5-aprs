@@ -20,6 +20,8 @@ run test_digi    "-DDIGI_HOST_TEST" src/digi.c src/ax25.c
 run test_kiss    "-DENABLE_TX"      src/kiss.c src/txq.c
 run test_menu    ""                src/menu.c src/memory.c src/textedit.c
 run test_msg     "-DMSG_HOST_TEST"  src/msg.c
+run test_geo     ""                src/geo.c
+run test_store   "-DMSG_HOST_TEST -DAPRS_HOST_TEST -Wno-unused-variable" src/store.c src/msg.c src/aprs.c src/ax25.c
 $CC -I . -I src -o build/test_beacon test/test_beacon.c src/beacon.c src/ax25.c
 printf '%-14s ' test_beacon
 out=$(python3 test/beacon_vectors.py) || { echo "$out"; echo "FAILED: test_beacon"; exit 1; }

@@ -11,6 +11,11 @@
 // Repeats of a message the sender retries (it hasn't heard our ack yet) are
 // acked again but not stored twice. Messages relayed from APRS-IS by an IGate
 // (third-party "}" packets) are handled the same way.
+//
+// Directed queries (APRS101 ch. 15) sent as messages are answered instead of
+// stored: ?APRSP our position (a beacon), ?APRSS our status (the beacon
+// comment), ?APRST / ?PING? the path the query took, ?APRSD the stations we
+// hear direct. The inbox is kept in EEPROM (store.h).
 
 #define MSG_INBOX     8
 #define MSG_TEXT_MAX  67           // APRS limit
@@ -35,7 +40,18 @@ typedef struct {
     uint8_t  state;                // MsgState
     uint8_t  tries;
     bool     unread;
+    bool     old;                  // restored at boot: heard / sent before power-off (age unknown)
 } AprsMessage;
+
+typedef enum {
+    MSG_QUERY_NONE,
+    MSG_QUERY_POSITION,            // ?APRSP
+    MSG_QUERY_STATUS,              // ?APRSS
+    MSG_QUERY_TRACE,               // ?APRST, ?PING?
+    MSG_QUERY_DIRECT,              // ?APRSD
+} MsgQuery;
+
+#define MSG_QUERY_GAP_S  10        // answer at most one query this often
 
 // From the APRS receiver, for every decoded frame (FCS stripped).
 void MSG_OnFrame(const uint8_t *frame, uint16_t len, uint32_t now_s);
@@ -61,5 +77,14 @@ bool MSG_TakeChanged(void);              // a sent message changed state (redraw
 // update their state here.
 bool MSG_HandleInfo(const char *from, const char *info, uint16_t n, const char *mycall,
                     uint32_t now_s, char ack_id[6]);
+
+// The query in the last message MSG_HandleInfo saw (MSG_QUERY_NONE if it
+// wasn't one, was a retry, or came within MSG_QUERY_GAP_S of the last answer).
+MsgQuery MSG_TakeQuery(void);
+
+// For store.h: the inbox table (newest first) and its count, and the fix-up
+// for an entry read back from EEPROM (false: drop it).
+AprsMessage *MSG_Table(uint8_t **count);
+bool MSG_RestoreMessage(AprsMessage *m);
 
 #endif

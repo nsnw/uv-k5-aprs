@@ -21,6 +21,8 @@ enum {
     ITEM_INTERVAL,
     ITEM_DIGI,
     ITEM_DIGI_HOPS,
+    ITEM_MSG_BEEP,
+    ITEM_TX_BEEP,
     ITEM_TXDELAY,
     ITEM_TXTAIL,
     ITEM_COUNT
@@ -29,7 +31,7 @@ enum {
 // Labels are short: a row is 18 characters (7 px each).
 static const char *const LABELS[ITEM_COUNT] = {
     "Memories", "Callsign", "SSID", "Lat", "Lon", "Comment", "Path", "Auto beacon",
-    "Beacon every", "Digipeater", "Digi hops", "TX delay", "TX tail",
+    "Beacon every", "Digipeater", "Digi hops", "Msg beep", "TX beep", "TX delay", "TX tail",
 };
 
 #define ROWS    7                   // pages 1..7, one pixel down; page 0 is the status bar
@@ -168,6 +170,8 @@ static void FormatValue(uint8_t item, const StationConfig *st, const BeaconConfi
     switch (item) {
     case ITEM_DIGI:       strcpy(out, (st->flags & STATION_DIGI) ? "ON" : "OFF"); break;
     case ITEM_AUTOBEACON: strcpy(out, (st->flags & STATION_AUTOBEACON) ? "ON" : "OFF"); break;
+    case ITEM_MSG_BEEP:   strcpy(out, (st->flags & STATION_MSG_QUIET) ? "OFF" : "ON"); break;
+    case ITEM_TX_BEEP:    strcpy(out, (st->flags & STATION_TX_QUIET) ? "OFF" : "ON"); break;
     case ITEM_DIGI_HOPS:
         U16ToDec(st->digi_max_hops, out);
         if (st->digi_max_hops == 1) strcat(out, " fill");
@@ -449,6 +453,8 @@ void MENU_HandleKey(KeyEvent_t ev)
         if (sEd == ED_VALUE)              Save();
         else if (sSel == ITEM_DIGI)       ToggleFlag(STATION_DIGI);
         else if (sSel == ITEM_AUTOBEACON) ToggleFlag(STATION_AUTOBEACON);
+        else if (sSel == ITEM_MSG_BEEP)   STATION_Toggle(STATION_MSG_QUIET);   // need no callsign
+        else if (sSel == ITEM_TX_BEEP)    STATION_Toggle(STATION_TX_QUIET);
         else                              StartEdit();
         break;
     case KEY_EXIT:

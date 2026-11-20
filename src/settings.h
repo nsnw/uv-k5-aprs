@@ -9,7 +9,9 @@
 //   0x0010 - 0x004F  BeaconConfig (beacon.h)
 //   0x0050 - 0x005F  StationConfig (station.h)
 //   0x0060 - 0x00FF  MemoryEntry[10] (memory.h)
-//   0x0100 - 0x1DFF  free
+//   0x0100 - 0x04FF  message inbox (store.h)
+//   0x0500 - 0x0BFF  station list (store.h)
+//   0x0C00 - 0x1DFF  free
 //   0x1E00 - 0x1FFF  factory calibration - never written by this firmware
 //
 // The stock layout is NOT used: flashing this firmware overwrites the start
@@ -34,7 +36,8 @@ typedef struct {
     uint8_t  squelch;     // 0 (open) .. 9
     uint8_t  backlight;   // 0..255
     uint8_t  memory;      // 0 = frequency mode, 1..10 = memory mode on memory 0..9
-    uint8_t  reserved[2];
+    uint8_t  list_by_distance;   // station list: 0 = most recent first, 1 = nearest first
+    uint8_t  reserved;
 } Settings_t;
 
 _Static_assert(sizeof(Settings_t) == 16, "Settings_t must be two EEPROM pages");
