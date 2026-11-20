@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "k5tools"
+version = "0.1.0"
+description = "Command-line tools for the Quansheng UV-K5 and the APRSK5 firmware"
+requires-python = ">=3.9"
+dependencies = ["click>=8.1", "pyserial>=3.5"]
+
+[project.scripts]
+k5 = "k5tools.cli:main"
+
+[tool.setuptools]
+packages = ["k5tools"]

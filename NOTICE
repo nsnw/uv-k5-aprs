@@ -1,0 +1,27 @@
+APRSK5
+Copyright 2026 Andy Smith (VE6LY)
+
+This project contains code derived from the following Apache-2.0 licensed
+projects. Files carrying an upstream copyright header are derived from them;
+modified files say so near the top.
+
+  DualTachyon, open re-implementation of the UV-K5 firmware
+    https://github.com/DualTachyon/uv-k5-firmware
+  OneOfEleven, egzumer and armel (F4HWN) custom firmware forks
+    https://github.com/OneOfEleven/uv-k5-firmware-custom
+    https://github.com/egzumer/uv-k5-firmware-custom
+    https://github.com/armel/uv-k5-firmware-custom
+
+Taken from upstream (lightly modified or unchanged):
+  startup/       vector table, reset handler, .data/.bss init
+  bsp/dp32g030/  DP32G030 register definitions
+  driver/        ADC, BK4819, EEPROM, I2C, SPI, keypad, ST7565, systick, UART
+  firmware.ld    linker script
+  tools/fw-pack.py  firmware packer
+  tools/k5tools/protocol.py  bootloader / EEPROM serial framing, after
+                             sq5bpf's k5prog (https://github.com/sq5bpf/k5prog)
+  src/font.c     font tables
+  src/board.c    pin setup sequence
+
+external/CMSIS/ contains headers from ARM CMSIS 5 (Apache-2.0), see
+external/CMSIS/LICENSE.txt.
