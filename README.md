@@ -6,7 +6,7 @@ send and receive messages and run as a KISS TNC, all from a $30 handheld.
 This is APRSK5 0.9.0. It grew out of **[uv-k5-minimal](https://github.com/nsnw/uv-k5-minimal)**, a small
 from-scratch firmware for the same radio. The low-level drivers come from
 the open UV-K5 firmware projects (see [Credits](#credits)); everything above
-them is new.
+them is new, and was mostly written by Claude (see [Yes, an AI wrote this](#yes-an-ai-wrote-this)).
 
 > [!WARNING]
 > - **Back up your EEPROM first** (`k5 backup eeprom.bin` while the stock firmware
@@ -182,6 +182,17 @@ python3 -m venv .venv && .venv/bin/pip install -e tools
 - Packets go to the destination `APZK5M`. `APZ` is APRS's experimental range;
   a registered tocall would come from [aprs-deviceid](https://github.com/aprsorg/aprs-deviceid).
 - Messages are kept in RAM, so they're lost when the radio is switched off.
+
+## Yes, an AI wrote this
+
+Most of this firmware was written by [Claude](https://claude.ai) (Anthropic's AI) working in
+Claude Code, with me (Andy, VE6LY) choosing what it should do, testing every build on a real radio
+and on the air, and deciding what stayed. The design calls and the bugs found the hard way are mine;
+most of the typing isn't.
+
+If you're about to open an issue or post a comment complaining that it's AI-written: don't
+bother. That kind of complaint will be mocked and then ignored as tedious bullshit. Bug reports,
+fixes and good ideas are welcome, whoever or whatever wrote them.
 
 ## Credits
 
