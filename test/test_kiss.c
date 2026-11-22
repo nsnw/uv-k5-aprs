@@ -57,12 +57,36 @@ static void HostSends(const uint8_t *p, unsigned n) { memcpy(sInBuf + sInLen, p,
 
 static void RunTicks(int n) { for (int i = 0; i < n; i++) { KISS_Poll10ms(); TXQ_Poll10ms(); } }
 
+// An AX.25 UI frame: APZK5M <- VE6CXZ-1, control 03, PID F0, then `info_len` info bytes.
+static unsigned Ui(uint8_t *out, unsigned info_len)
+{
+    static const char *const calls[2] = { "APZK5M", "VE6CXZ" };
+    unsigned n = 0;
+    for (int a = 0; a < 2; a++) {
+        for (int i = 0; i < 6; i++) out[n++] = (uint8_t)(calls[a][i] << 1);
+        out[n++] = (uint8_t)(0x60 | (a ? (1 << 1) | 1 : 0));
+    }
+    out[n++] = 0x03;
+    out[n++] = 0xF0;
+    for (unsigned i = 0; i < info_len; i++) out[n++] = (uint8_t)('a' + i % 26);
+    return n;
+}
+
 static uint8_t Frame[40];
 static void MakeFrame(void)
 {
-    for (unsigned i = 0; i < sizeof Frame; i++) Frame[i] = (uint8_t)(0x40 + i);
-    Frame[5] = 0xC0;   // needs escaping
-    Frame[9] = 0xDB;   // ditto
+    Ui(Frame, sizeof Frame - 16);
+    Frame[20] = 0xC0;   // needs escaping
+    Frame[24] = 0xDB;   // ditto
+}
+
+// KISS-wraps `f` (no escapes needed) after command byte `cmd`
+static unsigned Wrap(uint8_t *out, uint8_t cmd, const uint8_t *f, unsigned n)
+{
+    out[0] = 0xC0; out[1] = cmd;
+    memcpy(out + 2, f, n);
+    out[2 + n] = 0xC0;
+    return n + 3;
 }
 
 int main(void)
@@ -76,8 +100,8 @@ int main(void)
     KISS_SendFrame(Frame, sizeof Frame);
     CHECK(sOut[0] == 0xC0 && sOut[1] == 0x00 && sOut[sOutLen - 1] == 0xC0, "framing");
     CHECK(sOutLen == sizeof Frame + 3 + 2, "two escapes add 2 bytes (got %u)", sOutLen);
-    CHECK(sOut[2 + 5] == 0xDB && sOut[2 + 6] == 0xDC, "FEND escaped");
-    CHECK(sOut[2 + 10] == 0xDB && sOut[2 + 11] == 0xDD, "FESC escaped");
+    CHECK(sOut[2 + 20] == 0xDB && sOut[2 + 21] == 0xDC, "FEND escaped");
+    CHECK(sOut[2 + 25] == 0xDB && sOut[2 + 26] == 0xDD, "FESC escaped");
 
     // ------------------------------------------------ host -> radio: our own encoding round-trips
     HostSends(sOut, sOutLen);
@@ -98,7 +122,9 @@ int main(void)
     const uint8_t p255[] = { 0xC0, 0x02, 0xFF, 0xC0 };
     HostSends(p255, sizeof p255);
     sBusy = true;
-    const uint8_t data[] = { 0xC0, 0x00, 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16, 0xC0 };
+    uint8_t ui16[16], data[19];
+    Ui(ui16, 0);
+    Wrap(data, 0x00, ui16, sizeof ui16);
     HostSends(data, sizeof data);
     RunTicks(500);
     CHECK(sTxCount == 1, "nothing sent while busy");
@@ -107,12 +133,16 @@ int main(void)
     CHECK(sTxCount == 2 && sTxLen == 16 && sTxFlags == 45, "sent once clear, with TXDELAY");
 
     // ------------------------------------------------ other ports and bad escapes are ignored
-    const uint8_t port1[] = { 0xC0, 0x10, 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16, 0xC0 };
-    const uint8_t badesc[] = { 0xC0, 0x00, 1,2,3,0xDB,0x41,5,6,7,8,9,10,11,12,13,14,15, 0xC0 };
+    uint8_t port1[19], badesc[19];
+    Wrap(port1, 0x10, ui16, sizeof ui16);
+    Wrap(badesc, 0x00, ui16, sizeof ui16);
+    badesc[5] = 0xDB; badesc[6] = 0x41;
+    const uint8_t junk[] = { 0xC0, 0x00, 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16, 0xC0 };
     HostSends(port1, sizeof port1);
     HostSends(badesc, sizeof badesc);
+    HostSends(junk, sizeof junk);
     RunTicks(50);
-    CHECK(sTxCount == 2, "port 1 and bad escape dropped (sent %d)", sTxCount);
+    CHECK(sTxCount == 2, "port 1, bad escape and a non-AX.25 data frame dropped (sent %d)", sTxCount);
 
     // ------------------------------------------------ TXtail: 10 (100 ms) -> 15 flags
     const uint8_t txtail[] = { 0xC0, 0x04, 10, 0xC0 };
@@ -144,6 +174,49 @@ int main(void)
     CHECK(!KISS_IsActive(), "C0 FF C0 exits");
     CHECK(gTxConfig.preamble_flags == 40 && gTxConfig.tail_flags == 3, "station TX timing restored");
     CHECK(sHook == NULL, "hook removed");
+
+    // ------------------------------------------------ AX.25 check
+    uint8_t f[64];
+    unsigned n = Ui(f, 5);
+    CHECK(KISS_ValidAx25(f, (uint16_t)n), "UI frame valid");
+    f[14] = 0x13;  CHECK(KISS_ValidAx25(f, (uint16_t)n), "P/F bit allowed");
+    f[14] = 0x3F;  CHECK(!KISS_ValidAx25(f, (uint16_t)n), "not a UI frame");
+    f[14] = 0x03; f[15] = 0xCF;  CHECK(!KISS_ValidAx25(f, (uint16_t)n), "other PID");
+    f[15] = 0xF0; f[0] = (uint8_t)('a' << 1);  CHECK(!KISS_ValidAx25(f, (uint16_t)n), "lower case");
+    f[0] = (uint8_t)('A' << 1); f[6] |= 1;  CHECK(!KISS_ValidAx25(f, (uint16_t)n), "one address only");
+    f[6] &= (uint8_t)~1; f[13] &= (uint8_t)~1;  CHECK(!KISS_ValidAx25(f, (uint16_t)n), "no end of addresses");
+    CHECK(!KISS_ValidAx25(f, 15), "too short");
+
+    // ------------------------------------------------ console probing: only a real KISS frame switches
+    sInLen = sInPos = 0;
+    const int before = sTxCount;
+    struct { const uint8_t *b; unsigned n; KissProbe want; const char *what; } probes[] = {
+        { junk, sizeof junk, KISS_PROBE_REJECTED, "junk data frame" },
+        { badesc, sizeof badesc, KISS_PROBE_REJECTED, "bad escape" },
+        { ret, sizeof ret, KISS_PROBE_REJECTED, "C0 FF C0" },
+        { port1, sizeof port1, KISS_PROBE_REJECTED, "port 1" },
+        { txdelay, sizeof txdelay, KISS_PROBE_ACCEPTED, "TXDELAY" },
+        { data, sizeof data, KISS_PROBE_ACCEPTED, "valid data frame" },
+    };
+    for (unsigned i = 0; i < sizeof probes / sizeof probes[0]; i++) {
+        KISS_Exit();
+        KISS_ProbeStart();
+        KissProbe r = KISS_PROBE_PENDING;
+        for (unsigned k = 0; k < probes[i].n && r == KISS_PROBE_PENDING; k++)
+            r = KISS_ProbeByte(probes[i].b[k]);
+        CHECK(r == probes[i].want, "probe %s: %d", probes[i].what, r);
+        CHECK(KISS_IsActive() == (probes[i].want == KISS_PROBE_ACCEPTED), "probe %s: mode", probes[i].what);
+    }
+    RunTicks(50);
+    CHECK(sTxCount == before + 1, "the accepted data frame is sent (sent %d)", sTxCount - before);
+    KISS_Exit();
+    KISS_ProbeStart();
+    const uint8_t fends[] = { 0xC0, 0xC0, 0xC0 };
+    KissProbe r = KISS_PROBE_PENDING;
+    for (unsigned k = 0; k < sizeof fends; k++) r = KISS_ProbeByte(fends[k]);
+    CHECK(r == KISS_PROBE_PENDING && !KISS_IsActive(), "empty frames: still waiting");
+    KISS_ProbeCancel();
+    CHECK(KISS_ProbeByte(0x00) == KISS_PROBE_REJECTED, "after cancel: rejected");
 
     printf("%d passed, %d failed\n", sPass, sFail);
     return sFail != 0;

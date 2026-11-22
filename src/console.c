@@ -6,7 +6,9 @@
 #include "aprs.h"
 #include "beacon.h"
 #include "console.h"
+#include "bsp/dp32g030/gpio.h"
 #include "driver/bk4819.h"
+#include "driver/keyboard.h"
 #include "driver/uart.h"
 #include "kiss.h"
 #include "radio.h"
@@ -219,6 +221,30 @@ static void Execute(const char *line)
         return;
     }
 
+    case 'u': {                     // beacon type + status text (BeaconStatus, beacon.h)
+        p = SkipSpaces(p);
+        if (*p) {
+            BeaconStatus bs;
+            uint8_t *b = (uint8_t *)&bs;
+            for (unsigned i = 0; i < sizeof bs; i++) {
+                uint32_t byte;
+                const char h[3] = { p[0], p[1], 0 };
+                const char *q = h;
+                if (!p[0] || !p[1] || !ParseNumber(&q, 16, &byte) || q != h + 2) { Error("u: need 72 hex bytes"); return; }
+                b[i] = (uint8_t)byte;
+                p = SkipSpaces(p + 2);
+            }
+            if (*p) { Error("u: need 72 hex bytes"); return; }
+            if (!BEACON_SetStatus(&bs)) { Error("u: invalid status configuration"); return; }
+        }
+        UART_Print("U ");
+        const uint8_t *b = (const uint8_t *)BEACON_GetStatus();
+        for (unsigned i = 0; i < sizeof(BeaconStatus); i++)
+            PutHex(b[i], 2);
+        Newline();
+        return;
+    }
+
     case 'o': {
         p = SkipSpaces(p);
         if (*p) {
@@ -258,6 +284,16 @@ static void Execute(const char *line)
         KISS_Enter();
         return;
 
+    case 'y': {     // keypad diagnostics: "Y DIR DATA0 DATA1 DATA2 DATA3 DATA4 KEY"
+        uint16_t raw[5];
+        const uint32_t dir = GPIOA->DIR;
+        KEYBOARD_ReadRaw(raw);
+        UART_Print("Y "); PutHex(dir, 4);
+        for (int i = 0; i < 5; i++) { UART_Print(" "); PutHex(raw[i], 4); }
+        UART_Print(" "); PutHex((uint32_t)KEYBOARD_Poll(), 2); Newline();
+        return;
+    }
+
     case 'v':
         UART_Print("V " APP_NAME " " VERSION_STRING " (" BUILD_ID ")");
         Newline();
@@ -271,18 +307,38 @@ static void Execute(const char *line)
 
 // ------------------------------------------------------------ public
 
+#define PROBE_TICKS 100                 // 1 s for a KISS frame to complete after a FEND
+
 void CONSOLE_Poll(void)
 {
+    static bool    probing;
+    static uint8_t probe_ticks;
+    if (probing && ++probe_ticks > PROBE_TICKS) {   // no complete frame: noise
+        probing = false;
+        KISS_ProbeCancel();
+    }
     int c;
     while ((c = UART_ReadByte()) >= 0) {
-        if (c == 0xC0) {                // FEND: a KISS host is talking to us
-            sLineLen  = 0;
-            sOverflow = false;
-            if (!APRS_IsActive())
-                APRS_Enter();
-            KISS_Enter();
-            KISS_PushByte((uint8_t)c);  // the rest is read by KISS_Poll10ms()
-            return;
+        if (probing) {                  // after a FEND: is a KISS host talking to us?
+            const KissProbe r = KISS_ProbeByte((uint8_t)c);
+            if (r == KISS_PROBE_ACCEPTED) {
+                probing = false;
+                if (!APRS_IsActive())
+                    APRS_Enter();
+                return;                 // the rest is read by KISS_Poll10ms()
+            }
+            if (r == KISS_PROBE_REJECTED)
+                probing = false;
+            continue;
+        }
+        if (c == 0xC0) {                // FEND: maybe a KISS host (see KISS_ProbeByte)
+            sLineLen    = 0;
+            sOverflow   = false;
+            probing     = true;
+            probe_ticks = 0;
+            KISS_ProbeStart();
+            KISS_ProbeByte((uint8_t)c);
+            continue;
         }
         if (c == '\r' || c == '\n') {
             if (sOverflow)

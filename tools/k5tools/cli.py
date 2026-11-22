@@ -1,4 +1,4 @@
-"""k5: command-line tools for the Quansheng UV-K5 and the APRSK5 firmware."""
+"""k5: command-line tools for the Quansheng UV-K5 and the K5-APRS firmware."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from .console import K5Console
 from .protocol import Link
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_IMAGE = REPO_ROOT / "build" / "aprsk5.bin"
+DEFAULT_IMAGE = REPO_ROOT / "build" / "k5-aprs.bin"
 
 
 # ---------------------------------------------------------------- port handling
@@ -88,11 +88,11 @@ def _console(ctx: click.Context, raw_log: str | None = None) -> K5Console:
                    "auto-detect if exactly one USB serial adapter is present.")
 @click.pass_context
 def cli(ctx: click.Context, port: str | None) -> None:
-    """Tools for the Quansheng UV-K5 and the APRSK5 firmware.
+    """Tools for the Quansheng UV-K5 and the K5-APRS firmware.
 
     \b
     Flashing and EEPROM backup talk to the radio's bootloader / stock firmware.
-    console, version, reg, tune, aprs, send, beacon, config and kiss need APRSK5 running.
+    console, version, reg, tune, aprs, send, beacon, config and kiss need K5-APRS running.
     """
     ctx.obj = {"port": port}
 
@@ -121,7 +121,7 @@ def ports() -> None:
 @click.option("--wait", default=30, show_default=True, help="Seconds to wait for the bootloader.")
 @click.pass_context
 def flash(ctx: click.Context, image: Path | None, retries: int, version_string: str, wait: int) -> None:
-    """Flash a raw firmware IMAGE (default: build/aprsk5.bin).
+    """Flash a raw firmware IMAGE (default: build/k5-aprs.bin).
 
     Put the radio in bootloader mode first: hold PTT while switching it on
     (the flashlight LED lights). Use the raw .bin, not .packed.bin.
@@ -168,7 +168,7 @@ def flash(ctx: click.Context, image: Path | None, retries: int, version_string: 
 def backup(ctx: click.Context, output: Path, size: str, force: bool) -> None:
     """Back up the EEPROM to OUTPUT (radio running stock/F4HWN firmware).
 
-    Read-only. Doesn't work while the radio runs APRSK5.
+    Read-only. Doesn't work while the radio runs K5-APRS.
     """
     if output.exists() and not force:
         raise click.UsageError(f"{output} exists; pass --force to overwrite")
@@ -190,12 +190,12 @@ def backup(ctx: click.Context, output: Path, size: str, force: bool) -> None:
     click.echo(f"radio firmware {version}; wrote {len(data)} bytes to {output}")
 
 
-# ---------------------------------------------------------------- APRSK5 console
+# ---------------------------------------------------------------- K5-APRS console
 
 @cli.command()
 @click.pass_context
 def console(ctx: click.Context) -> None:
-    """Interactive APRSK5 debug console.
+    """Interactive K5-APRS debug console.
 
     \b
     Commands (hex unless noted):
@@ -232,14 +232,14 @@ def console(ctx: click.Context) -> None:
 @cli.command()
 @click.pass_context
 def version(ctx: click.Context) -> None:
-    """Show the APRSK5 firmware version."""
+    """Show the K5-APRS firmware version."""
     with _console(ctx) as k:
         click.echo(k.version())
 
 
 @cli.group()
 def reg() -> None:
-    """Read or write BK4819 registers (APRSK5)."""
+    """Read or write BK4819 registers (K5-APRS)."""
 
 
 @reg.command("read")
@@ -270,7 +270,7 @@ def reg_write(ctx: click.Context, register: str, value: str) -> None:
 @click.argument("freq")
 @click.pass_context
 def tune(ctx: click.Context, freq: str) -> None:
-    """Tune to FREQ in MHz (APRSK5; 6 m, 2 m, 1.25 m and 70 cm only).
+    """Tune to FREQ in MHz (K5-APRS; 6 m, 2 m, 1.25 m and 70 cm only).
 
     Example: `k5 tune 144.390`
     """
@@ -326,20 +326,30 @@ def _read_beacon(k: K5Console):
     return None if data == "-" else Beacon.unpack(bytes.fromhex(data))
 
 
-def _show_beacon(b) -> None:
+def _read_status(k: K5Console):
+    from .beacon import Status
+    return Status.unpack(bytes.fromhex(k.command("u", "U").split()[1]))
+
+
+def _show_beacon(b, st, version: str = "K5-APRS") -> None:
     click.echo(f"call     {b.source}")
-    click.echo(f"position {b.lat:.5f}, {b.lon:.5f}")
+    click.echo(f"position {f'{b.lat:.5f}, {b.lon:.5f}' if b.has_position else '(not set)'}")
     click.echo(f"symbol   {b.symbol}")
-    click.echo(f"path     {b.tnc2().split(':')[0].split(',', 1)[1] if b.path_hops else '(none)'}")
+    click.echo(f"path     {b.header().split(',', 1)[1] if b.path_hops else '(none)'}")
     click.echo(f"comment  {b.comment!r}")
-    click.echo(f"packet   {b.tnc2()}")
+    click.echo(f"type     {st.type}" + ("" if b.has_position or st.type == "status"
+                                        else " (no position: sends the status report)"))
+    click.echo(f"status   {st.text!r}" + ("" if st.text else f" (sends {version!r})"))
+    for f in st.frames(b, version):
+        click.echo(f"sends    {f}")
 
 
 @cli.group()
 def beacon() -> None:
-    """APRS position beacon stored in the radio (APRSK5).
+    """APRS beacon stored in the radio (K5-APRS): position and / or status report.
 
     Send it from the radio: hold F (#); it goes out on the current frequency.
+    Without a position the beacon goes out as a status report (">text").
     """
 
 
@@ -349,46 +359,75 @@ def beacon_show(ctx: click.Context) -> None:
     """Show the beacon configuration stored in the radio."""
     with _console(ctx) as k:
         b = _read_beacon(k)
+        st = _read_status(k)
+        version = " ".join(k.version().split()[:2])
     if b is None:
-        click.echo("no beacon configured (use `k5 beacon set`)")
+        click.echo("no beacon configured (use `k5 beacon set --call ...`)")
     else:
-        _show_beacon(b)
+        _show_beacon(b, st, version)
 
 
 @beacon.command("set")
-@click.option("--call", "call", required=True, metavar="CALL[-SSID]", help="Your callsign, e.g. VE6HUE-1.")
-@click.option("--lat", type=click.FloatRange(-90, 90), required=True, help="Latitude, decimal degrees (+N).")
-@click.option("--lon", type=click.FloatRange(-180, 180), required=True, help="Longitude, decimal degrees (+E).")
-@click.option("--symbol", default="/[", show_default=True,
-              help="APRS symbol table+code: /[ person, /> car, /- house, /b bike, /k truck.")
-@click.option("--path", type=click.Choice(["none", "1", "2"]), default="2", show_default=True,
+@click.option("--call", "call", metavar="CALL[-SSID]", help="Your callsign, e.g. VE6HUE-1 (needed the first time).")
+@click.option("--lat", type=click.FloatRange(-90, 90), help="Latitude, decimal degrees (+N).")
+@click.option("--lon", type=click.FloatRange(-180, 180), help="Longitude, decimal degrees (+E).")
+@click.option("--no-position", is_flag=True, help="Clear the position (beacon as a status report).")
+@click.option("--symbol", help="APRS symbol table+code: /[ person, /> car, /- house, /# digi, /k truck.")
+@click.option("--path", type=click.Choice(["none", "1", "2"]),
               help="Digipeater hops: none, 1 (WIDE1-1) or 2 (WIDE1-1,WIDE2-1).")
-@click.option("--comment", default="", help="Up to 39 characters.")
+@click.option("--comment", help="Position comment, up to 39 characters.")
+@click.option("--type", "kind", type=click.Choice(["position", "status", "both"]),
+              help="What a beacon sends (position falls back to status without a position).")
+@click.option("--status", help="Status text, up to 62 characters (empty = firmware name and version).")
 @click.pass_context
-def beacon_set(ctx: click.Context, call: str, lat: float, lon: float, symbol: str,
-               path: str, comment: str) -> None:
-    """Store the beacon configuration in the radio's EEPROM."""
+def beacon_set(ctx: click.Context, call: str | None, lat: float | None, lon: float | None,
+               no_position: bool, symbol: str | None, path: str | None, comment: str | None,
+               kind: str | None, status: str | None) -> None:
+    """Change the beacon configuration; anything not given stays as it is."""
     from .beacon import Beacon
-
-    name, _, ssid = call.upper().partition("-")
-    if ssid and not ssid.isdigit():
-        raise click.BadParameter(f"{call!r}", param_hint="--call")
-    b = Beacon(name, int(ssid or 0), 0 if path == "none" else int(path), symbol,
-               Beacon.degrees_to_hmin(lat), Beacon.degrees_to_hmin(lon), comment)
-    try:
-        blob = b.pack()
-    except ValueError as e:
-        raise click.UsageError(str(e))
+    if (lat is None) != (lon is None):
+        raise click.UsageError("give both --lat and --lon")
     with _console(ctx) as k:
         try:
+            b = _read_beacon(k)
+            st = _read_status(k)
+            if b is None:
+                if not call:
+                    raise click.UsageError("no beacon configured yet: --call is needed")
+                b = Beacon("", 0, 1, "/[", 0, 0, "")
+            if call:
+                name, _, ssid = call.upper().partition("-")
+                if ssid and not ssid.isdigit():
+                    raise click.BadParameter(f"{call!r}", param_hint="--call")
+                b.call, b.ssid = name, int(ssid or 0)
+            if lat is not None:
+                b.lat_hmin, b.lon_hmin = Beacon.degrees_to_hmin(lat), Beacon.degrees_to_hmin(lon)
+            if no_position:
+                b.lat_hmin = b.lon_hmin = 0
+            if symbol is not None:
+                b.symbol = symbol
+            if path is not None:
+                b.path_hops = 0 if path == "none" else int(path)
+            if comment is not None:
+                b.comment = comment
+            if kind is not None:
+                st.type = kind
+            if status is not None:
+                st.text = status
+            try:
+                blob, sblob = b.pack(), st.pack()
+            except ValueError as e:
+                raise click.UsageError(str(e))
             k.command("c " + blob.hex().upper(), "C")
+            k.command("u " + sblob.hex().upper(), "U")
+            stored, sstored = _read_beacon(k), _read_status(k)
+            version = " ".join(k.version().split()[:2])
         except RuntimeError as e:
             raise click.ClickException(str(e))
-        stored = _read_beacon(k)
-    if stored != b:
+    if stored != b or sstored != st:
         raise click.ClickException("read-back differs from what was written")
     click.echo("stored (verified by read-back):")
-    _show_beacon(stored)
+    _show_beacon(stored, sstored, version)
 
 
 @cli.command()
@@ -398,7 +437,7 @@ def beacon_set(ctx: click.Context, call: str, lat: float, lon: float, symbol: st
               help="Destination (APZ* = experimental software).")
 @click.option("--path", default="", show_default=True,
               help="Digipeater path, e.g. WIDE1-1,WIDE2-1. Empty = not digipeated.")
-@click.option("--info", default=">APRSK5 AFSK test", show_default=True,
+@click.option("--info", default=">K5-APRS AFSK test", show_default=True,
               help="APRS information field.")
 @click.option("--freq", default="144.900", show_default=True,
               help="MHz; the firmware transmits only on 50-54, 144-148, 222-225 and 430-450 MHz.")
@@ -414,7 +453,7 @@ def beacon_set(ctx: click.Context, call: str, lat: float, lon: float, symbol: st
 def send(ctx: click.Context, source: str, dest: str, path: str, info: str, freq: str,
          count: int, interval: float, gain: int | None, bias: int | None,
          flags: int | None, raw_log: str | None) -> None:
-    """Transmit APRS frames from the radio (APRSK5).
+    """Transmit APRS frames from the radio (K5-APRS).
 
     \b
     This keys the transmitter: you need an amateur licence, and SOURCE must be
@@ -652,7 +691,7 @@ def kiss_monitor(ctx: click.Context, freq: str | None) -> None:
 @click.option("--from", "source", required=True, metavar="CALL-SSID", help="Your callsign.")
 @click.option("--to", "dest", default="APZK5M", show_default=True, metavar="CALL")
 @click.option("--path", default="", help="Digipeaters, e.g. WIDE1-1,WIDE2-1.")
-@click.option("--info", default=">APRSK5 KISS test", show_default=True)
+@click.option("--info", default=">K5-APRS KISS test", show_default=True)
 @click.option("--txdelay", type=click.IntRange(1, 255), help="KISS TXDELAY, 10 ms units.")
 @_FREQ_OPTION
 @click.pass_context

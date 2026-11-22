@@ -37,6 +37,47 @@ static uint8_t  sIn[1 + KISS_MAX_FRAME];   // command byte + frame
 static uint16_t sInLen;
 static bool     sInFrame, sEscape, sInBad;
 
+// probing (console mode): the first complete frame decides
+static bool     sProbing;
+static int8_t   sProbeResult;              // KissProbe
+
+// An AX.25 UI frame with APRS's PID, as a host sends for transmission:
+// 2-10 addresses of upper-case letters, digits and padding spaces (shifted
+// left, extension bit only on the last), then control 0x03 (P/F allowed) and
+// PID 0xF0. Anything else from the serial line is noise or not for us.
+bool KISS_ValidAx25(const uint8_t *f, uint16_t n)
+{
+    if (n < 16 || n > KISS_MAX_FRAME)
+        return false;
+    uint16_t pos = 0;
+    for (uint8_t a = 0; ; a++) {
+        if (a >= 10 || pos + 7 > n)
+            return false;
+        for (uint8_t i = 0; i < 6; i++) {
+            const uint8_t raw = f[pos + i], ch = raw >> 1;
+            if ((raw & 1) || !((ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || (ch == ' ' && i > 0)))
+                return false;
+        }
+        const bool last = f[pos + 6] & 1;
+        pos += 7;
+        if (last) {
+            if (a < 1)
+                return false;                  // needs a destination and a source
+            break;
+        }
+    }
+    return pos + 2 <= n && (f[pos] & ~0x10) == 0x03 && f[pos + 1] == 0xF0;
+}
+
+// Good enough to switch the console to KISS: a valid data frame on port 0,
+// or a one-byte TXDELAY / P / SlotTime / TXtail setting.
+static bool ValidHostFrame(const uint8_t *p, uint16_t n)
+{
+    if (p[0] == CMD_DATA)
+        return KISS_ValidAx25(p + 1, (uint16_t)(n - 1));
+    return p[0] >= CMD_TXDELAY && p[0] <= CMD_TXTAIL && n == 2;
+}
+
 #ifdef ENABLE_TX
 static uint8_t TenMsToFlags(uint8_t v, uint8_t max)
 {
@@ -49,6 +90,15 @@ static uint8_t TenMsToFlags(uint8_t v, uint8_t max)
 
 static void HandleFrame(const uint8_t *p, uint16_t n)
 {
+    if (sProbing) {                        // console mode: switch only for a real host
+        sProbing = false;
+        if (!ValidHostFrame(p, n)) {
+            sProbeResult = KISS_PROBE_REJECTED;
+            return;
+        }
+        sProbeResult = KISS_PROBE_ACCEPTED;
+        KISS_Enter();                      // and handle this frame below
+    }
     const uint8_t cmd = p[0];
     if (cmd == CMD_RETURN) {
         sExitRequested = true;
@@ -59,7 +109,8 @@ static void HandleFrame(const uint8_t *p, uint16_t n)
     // Parameters last until KISS mode ends, then the station's own apply.
     switch (cmd & 0x0F) {
     case CMD_DATA:
-        TXQ_Push(p + 1, n - 1);   // full: dropped (KISS has no flow control)
+        if (KISS_ValidAx25(p + 1, (uint16_t)(n - 1)))
+            TXQ_Push(p + 1, n - 1);   // full: dropped (KISS has no flow control)
         break;
 #ifdef ENABLE_TX
     case CMD_TXDELAY:
@@ -106,6 +157,38 @@ void KISS_PushByte(uint8_t b)
         sIn[sInLen++] = b;
     else
         sInBad = true;                     // too long to transmit anyway
+}
+
+void KISS_ProbeStart(void)
+{
+    sProbing     = true;
+    sProbeResult = KISS_PROBE_PENDING;
+    sInFrame     = false;
+    sInLen       = 0;
+    sEscape      = false;
+    sInBad       = false;
+}
+
+KissProbe KISS_ProbeByte(uint8_t b)
+{
+    if (!sProbing && sProbeResult == KISS_PROBE_PENDING)
+        return KISS_PROBE_REJECTED;        // not started
+    KISS_PushByte(b);
+    if (sProbing && sInBad) {              // bad escape or too long: not KISS
+        sProbing     = false;
+        sProbeResult = KISS_PROBE_REJECTED;
+    }
+    const KissProbe r = (KissProbe)sProbeResult;
+    if (r != KISS_PROBE_PENDING)
+        sProbeResult = KISS_PROBE_PENDING;
+    return r;
+}
+
+void KISS_ProbeCancel(void)
+{
+    sProbing     = false;
+    sProbeResult = KISS_PROBE_PENDING;
+    sInFrame     = false;
 }
 
 // ------------------------------------------------------------ radio -> host

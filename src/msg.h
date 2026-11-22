@@ -13,8 +13,8 @@
 // (third-party "}" packets) are handled the same way.
 //
 // Directed queries (APRS101 ch. 15) sent as messages are answered instead of
-// stored: ?APRSP our position (a beacon), ?APRSS our status (the beacon
-// comment), ?APRST / ?PING? the path the query took, ?APRSD the stations we
+// stored: ?APRSP our position (if one is set), ?APRSS our status report
+// (beacon.h), ?APRST / ?PING? the path the query took, ?APRSD the stations we
 // hear direct. The inbox is kept in EEPROM (store.h).
 
 #define MSG_INBOX     8

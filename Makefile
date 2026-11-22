@@ -1,8 +1,8 @@
-# APRSK5 - APRS station firmware for the Quansheng UV-K5 (DP32G030)
+# K5-APRS - APRS station firmware for the Quansheng UV-K5 (DP32G030)
 
-TARGET    ?= aprsk5
-APP_NAME  := APRSK5
-VERSION   ?= 0.9.0
+TARGET    ?= k5-aprs
+APP_NAME  := K5-APRS
+VERSION   ?= 0.9.1
 BUILD_ID  ?= $(shell git describe --always --dirty 2>/dev/null || echo dev)
 BUILD     := build
 # ENABLE_TX=0 builds a receive-only firmware (the transmitter is never keyed).

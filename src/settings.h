@@ -11,7 +11,8 @@
 //   0x0060 - 0x00FF  MemoryEntry[10] (memory.h)
 //   0x0100 - 0x04FF  message inbox (store.h)
 //   0x0500 - 0x0BFF  station list (store.h)
-//   0x0C00 - 0x1DFF  free
+//   0x0C00 - 0x0C47  BeaconStatus: beacon type, status text (beacon.h)
+//   0x0C48 - 0x1DFF  free
 //   0x1E00 - 0x1FFF  factory calibration - never written by this firmware
 //
 // The stock layout is NOT used: flashing this firmware overwrites the start

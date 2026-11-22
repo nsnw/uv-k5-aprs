@@ -15,6 +15,11 @@ void APP_ShowMessage(const char *msg, bool now);
 uint32_t APP_GetFrequency(void);
 void     APP_SetFrequency(uint32_t f);   // retunes; ERROR message if not tunable
 
+// The pages (stations, messages, radio, packet) sit under a two-line status
+// bar: their first page. The settings and the text editors keep a one-line
+// bar and start on page 1.
+#define APP_TOP_PAGE 2
+
 // Transmitter keyed: on = show T in the status icon and draw immediately.
 void APP_SetTransmitting(bool on);
 

@@ -15,7 +15,7 @@
  */
 
 // BK4819 RF transceiver: bit-banged 3-wire bus + receive-path helpers.
-// Modified for APRSK5: trimmed to receive functions plus the few transmit
+// Modified for K5-APRS: trimmed to receive functions plus the few transmit
 // helpers APRS needs; tones, DTMF, CTCSS/DCS, VOX, FSK TX and roger-beep code removed. Function bodies
 // below are otherwise unchanged from upstream.
 

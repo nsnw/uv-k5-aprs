@@ -180,28 +180,56 @@ static char *U8ToDec(uint8_t v, char *out)
     return out;
 }
 
-void TE_RenderText(const char *label)
+void TE_DrawWrapped(const char *s, uint8_t first_page, uint8_t rows)
 {
     char line[COLS + 1];
-    const uint8_t n = Len();
-    for (uint8_t row = 0; row * COLS <= n && row < TEXT_ROWS; row++) {
+    const uint8_t n = (uint8_t)strlen(s);
+    for (uint8_t row = 0; row * COLS < n && row < rows; row++) {
         const uint8_t start = (uint8_t)(row * COLS);
         const uint8_t len = (uint8_t)(n - start < COLS ? n - start : COLS);
-        memcpy(line, sBuf + start, len);
+        memcpy(line, s + start, len);
         line[len] = '\0';
-        GFX_Text(1, (uint8_t)(1 + row), line);
+        GFX_Text(1, (uint8_t)(first_page + row), line);
     }
-    const uint8_t cr = (uint8_t)(sCursor / COLS), cc = (uint8_t)(sCursor % COLS);
-    if (cr < TEXT_ROWS) {
-        const uint8_t x = (uint8_t)(1 + cc * CELL_W);
-        GFX_InvertPage((uint8_t)(1 + cr), x - 1, (uint8_t)(x + GFX_CHAR_W - 1));
-    }
+}
 
+void TE_DrawText(uint8_t first_page, uint8_t rows)
+{
+    TE_DrawWrapped(sBuf, first_page, rows);
+    const uint8_t cr = (uint8_t)(sCursor / COLS), cc = (uint8_t)(sCursor % COLS);
+    if (cr < rows) {
+        const uint8_t x = (uint8_t)(1 + cc * CELL_W);
+        GFX_InvertPage((uint8_t)(first_page + cr), x - 1, (uint8_t)(x + GFX_CHAR_W - 1));
+    }
+}
+
+void TE_FormatCount(char *out)
+{
+    strcpy(U8ToDec(Len(), out), "/");
+    U8ToDec(sMax, out + strlen(out));
+}
+
+void TE_DrawHints(uint8_t page, const char *chars, const char *done)
+{
+    char line[COLS + 1];
+    if (!chars) {
+        strcpy(line, "1.,-/ 0 space ");
+        strcat(line, sLower ? "abc" : "ABC");   // SIDE1 switches
+        chars = line;
+    }
+    GFX_Text(1, page, chars);
+    char ok[COLS + 1] = GFX_KEY_MENU " ";
+    strcat(ok, done);
+    GFX_Text(1, (uint8_t)(page + 1), ok);
+    GFX_TextRight(LCD_WIDTH - 1, (uint8_t)(page + 1), GFX_ICON_HOLD GFX_KEY_EXIT " CANCEL");
+}
+
+void TE_RenderText(const char *label)
+{
     char count[8];
-    strcpy(U8ToDec(n, count), "/");
-    U8ToDec(sMax, count + strlen(count));
+    TE_DrawText(1, TEXT_ROWS);
+    TE_FormatCount(count);
     GFX_Text(1, 5, label);
     GFX_TextRight(LCD_WIDTH - 1, 5, count);
-    GFX_Text(1, 6, "1 .,-/  0 space");
-    GFX_Text(1, 7, sLower ? "SIDE1 abc  *< F>" : "SIDE1 ABC  *< F>");
+    TE_DrawHints(6, NULL, "SAVE");
 }

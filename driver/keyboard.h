@@ -47,5 +47,9 @@ typedef enum KEY_Code_e KEY_Code_t;
 
 KEY_Code_t KEYBOARD_Poll(void);
 
+// Diagnostics (console 'y'): the GPIOA input register for each scan row
+// (row 0 = nothing pulled down, then rows 1-4), sampled as KEYBOARD_Poll does.
+void KEYBOARD_ReadRaw(uint16_t out[5]);
+
 #endif
 

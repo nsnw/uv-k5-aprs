@@ -12,14 +12,17 @@
 //   p N           words to read automatically on each FIFO-almost-full
 //                 interrupt (default 4, 0 = don't read)            -> "P N"
 //   t FREQ        tune; FREQ is DECIMAL in 10 Hz units             -> "T FREQ"
+//   y             keypad diagnostics: GPIOA DIR, raw input per scan row, key
 //   v             version                                          -> "V ..."
 //   c             beacon configuration (64-byte BeaconConfig)      -> "C HEX" (or "C -" if unset)
 //   c HEX         validate and store a new beacon configuration    -> "C HEX"
+//   u             beacon type + status text (72-byte BeaconStatus)    -> "U HEX"
+//   u HEX         validate and store a new one                        -> "U HEX"
 //   o             station options (16-byte StationConfig, station.h)   -> "O HEX"
 //   o HEX         validate, store and apply new station options       -> "O HEX"
 //   k [FREQ]      switch the serial line to KISS (see kiss.h), optionally
 //                 retuning first (DECIMAL, 10 Hz units)  -> "K FREQ", then KISS.
-//                 Any KISS frame (starting with 0xC0) also switches to KISS.
+//                 A complete, valid KISS frame (see kiss.h) also switches to KISS.
 //
 // With ENABLE_TX (see tx.h for the safety limits):
 //   x HEX...      transmit one AX.25 frame (addresses..info, no FCS) as

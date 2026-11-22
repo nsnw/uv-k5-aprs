@@ -25,6 +25,8 @@ static uint32_t    sTicks10ms;
 static uint8_t     sCount;
 static AprsStation sStations[APRS_MAX_STATIONS];   // most recently heard first
 static Ax25Rx      sRx;
+static char        sLastLine[AX25_MAX_FRAME + 64];   // latest frame, TNC2 text
+static uint32_t    sLastHeard_s;
 
 // ------------------------------------------------------------ chip setup
 
@@ -175,16 +177,17 @@ static void OnFrame(const uint8_t *frame, uint16_t len)
     DIGI_OnFrame(frame, len, now);
     MSG_OnFrame(frame, len, now);
 
+    AX25_FormatTNC2(frame, len, sLastLine, sizeof sLastLine);
+    sLastHeard_s = now;
+
     // Also pass it on over the programming cable: raw to a KISS host,
     // otherwise as a TNC2 text line.
     if (KISS_IsActive()) {
         KISS_SendFrame(frame, len);
         return;
     }
-    static char line[AX25_MAX_FRAME + 64];
-    AX25_FormatTNC2(frame, len, line, sizeof line);
     UART_Print("A ");
-    UART_Print(line);
+    UART_Print(sLastLine);
     UART_Print("\r\n");
 }
 
@@ -233,6 +236,12 @@ void APRS_Enter(void)
 bool APRS_IsActive(void)         { return sActive; }
 bool APRS_IsReceiving(void)      { return sReceiving; }
 uint16_t APRS_TotalDecoded(void) { return sTotal; }
+
+const char *APRS_LastPacket(uint32_t *heard_s)
+{
+    *heard_s = sLastHeard_s;
+    return sLastLine;
+}
 void APRS_Tick10ms(void)         { sTicks10ms++; }
 uint32_t APRS_NowSeconds(void)   { return sTicks10ms / 100; }
 

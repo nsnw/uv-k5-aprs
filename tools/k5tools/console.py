@@ -1,4 +1,4 @@
-"""Talk to the APRSK5 debug console over the programming cable.
+"""Talk to the K5-APRS debug console over the programming cable.
 
 As a library:
     with K5Console("/dev/cu.usbserial-XXXX") as k:

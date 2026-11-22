@@ -15,6 +15,47 @@
 void EEPROM_ReadBuffer(uint16_t a, void *p, uint8_t n) { (void)a; memset(p, 0xFF, n); }
 void EEPROM_WriteBuffer(uint16_t a, const void *p) { (void)a; (void)p; }
 
+// Status reports and the beacon type (self-checking; failures go to stderr
+// and fail the run). Uses the last valid configuration read above.
+static int StatusChecks(void)
+{
+    int fail = 0;
+#define EXPECT(c, ...) do { if (!(c)) { fail++; fprintf(stderr, "FAIL: " __VA_ARGS__); fprintf(stderr, "\n"); } } while (0)
+    uint8_t frame[400];
+    char text[400];
+    BeaconStatus bs;
+    memset(&bs, 0, sizeof bs);
+    bs.magic = BEACON_STATUS_MAGIC;
+    bs.type  = BEACON_TYPE_STATUS;
+    strcpy(bs.text, "Digi on the hill");
+    EXPECT(BEACON_SetStatus(&bs), "valid status stored");
+    AX25_FormatTNC2(frame, BEACON_BuildStatusFrame(frame, sizeof frame), text, sizeof text);
+    EXPECT(strstr(text, ":>Digi on the hill") && !strncmp(text, "N0CALL-9>APZK5M,WIDE1-1,WIDE2-1:", 32),
+           "status frame: %s", text);
+    bs.text[0] = '\0';
+    BEACON_SetStatus(&bs);
+    AX25_FormatTNC2(frame, BEACON_BuildStatusFrame(frame, sizeof frame), text, sizeof text);
+    EXPECT(strstr(text, ":>K5-APRS"), "empty status text -> K5-APRS (%s)", text);
+    strcpy(bs.text, "a|b");
+    EXPECT(!BEACON_SetStatus(&bs), "| rejected");
+    memset(bs.text, 'x', 62); bs.text[62] = '\0';
+    EXPECT(BEACON_SetStatus(&bs), "62 characters allowed");
+    memset(bs.text, 'x', 63); bs.text[63] = '\0';
+    EXPECT(!BEACON_SetStatus(&bs), "63 characters rejected");
+    bs.text[0] = '\0'; bs.type = BEACON_TYPE_COUNT;
+    EXPECT(!BEACON_SetStatus(&bs), "bad type rejected");
+    EXPECT(BEACON_GetStatus()->type == BEACON_TYPE_STATUS, "rejected ones don't change it");
+
+    // no position: no position report, still a status report
+    BeaconConfig c = *BEACON_Get();
+    EXPECT(BEACON_HasPosition(), "has a position");
+    c.lat = c.lon = 0;
+    EXPECT(BEACON_Set(&c), "callsign without a position is a valid configuration");
+    EXPECT(!BEACON_HasPosition() && BEACON_BuildFrame(frame, sizeof frame) == 0, "no position report");
+    EXPECT(BEACON_BuildStatusFrame(frame, sizeof frame) > 0, "status report without a position");
+    return fail != 0;
+}
+
 int main(void)
 {
     static char line[1024];
@@ -35,5 +76,5 @@ int main(void)
         AX25_FormatTNC2(frame, len, text, sizeof text);
         printf("%s\n", text);
     }
-    return 0;
+    return StatusChecks();
 }

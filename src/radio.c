@@ -71,7 +71,6 @@ static void SetAudio(bool open)
         BOARD_SetAudioAmp(false);
         BK4819_SetAF(BK4819_AF_MUTE);
     }
-    BK4819_ToggleGpioOut(BK4819_GPIO6_PIN2_GREEN, open);
 }
 
 static void UpdateAudio(void)

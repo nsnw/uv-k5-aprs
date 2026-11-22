@@ -8,7 +8,6 @@
 #include "beacon.h"
 #include "kiss.h"
 #include "settings.h"
-#include "version.h"
 #ifdef ENABLE_TX
 #include "tx.h"
 #include "txq.h"
@@ -394,14 +393,12 @@ static void AnswerQuery(MsgQuery q, const char *from, const uint8_t *frame, uint
 {
     char text[MSG_TEXT_MAX + 1];
     switch (q) {
-    case MSG_QUERY_POSITION:
-        BEACON_Send();
+    case MSG_QUERY_POSITION:                // nothing if no position is set
+        BEACON_SendPosition();
         break;
-    case MSG_QUERY_STATUS: {
-        const char *c = BEACON_Get()->comment;
-        TransmitInfo(">", c[0] ? c : APP_NAME " " VERSION_STRING);
+    case MSG_QUERY_STATUS:
+        BEACON_SendStatus();
         break;
-    }
     case MSG_QUERY_TRACE: {                 // "SRC>DEST,DIGI*,WIDE2*": the header as heard
         static char line[AX25_MAX_FRAME + 64];
         AX25_FormatTNC2(frame, len, line, sizeof line);

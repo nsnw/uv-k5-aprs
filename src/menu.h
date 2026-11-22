@@ -11,9 +11,10 @@
 //   EXIT         cancel the edit; otherwise close the menu
 // Memories (memory.h): MENU tunes, hold MENU stores the current frequency and
 // names it, hold EXIT clears.
-// Station options are stored in station.h's config; callsign, SSID and beacon
-// path in beacon.h's. A callsign entered here without a beacon set up gets no
-// position, so the beacon stays off until `k5 beacon set` gives it one.
+// Station options are stored in station.h's config; callsign, SSID, position,
+// symbol, comment and path in beacon.h's BeaconConfig; beacon type and status
+// text in its BeaconStatus. A callsign alone is enough to beacon: without a
+// position the beacon goes out as a status report.
 
 void MENU_Open(void);
 bool MENU_IsOpen(void);

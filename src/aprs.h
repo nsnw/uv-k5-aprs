@@ -48,6 +48,7 @@ uint16_t APRS_TotalDecoded(void);
 uint8_t  APRS_StationCount(void);
 const AprsStation *APRS_GetStation(uint8_t index);   // 0 = most recently heard
 int      APRS_FindStation(const char *source);       // index or -1
+const char *APRS_LastPacket(uint32_t *heard_s);   // TNC2 line of the latest frame, "" if none
 bool     APRS_TakeNewPacket(void);     // true once after each decoded packet
 
 // What the latest packet was, for the RX beep: a station not in the list (or

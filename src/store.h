@@ -24,7 +24,7 @@
 
 #define STORE_MSG_ADDR            0x0100
 #define STORE_STATION_ADDR        0x0500
-#define STORE_END                 0x0C00
+#define STORE_END                 0x0C00   // BeaconStatus follows
 #define STORE_MSG_DELAY_S         2
 #define STORE_STATION_DELAY_S     10
 #define STORE_STATION_INTERVAL_S  300

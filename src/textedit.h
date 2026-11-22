@@ -35,8 +35,19 @@ bool     TE_Lower(void);
 // Fixed modes: the field with '_' for blanks, ready to draw.
 void TE_FormatFixed(char *out);
 
+// `s` wrapped every COLS characters over `rows` pages from `first_page`.
+void TE_DrawWrapped(const char *s, uint8_t first_page, uint8_t rows);
+// TE_TEXT: the text being edited, the same way, with the cursor.
+void TE_DrawText(uint8_t first_page, uint8_t rows);
+// "12/67": TE_TEXT's length and maximum.
+void TE_FormatCount(char *out);
+// Two rows of hints from `page`: what the keys type (`chars`, or for
+// TE_TEXT NULL: punctuation, space and the case), then "[M] <done>" and
+// "(hold)[E] CANCEL".
+void TE_DrawHints(uint8_t page, const char *chars, const char *done);
+
 // TE_TEXT, full screen (pages 1-7): the text wrapped over pages 1-4 with
-// the cursor, `label` and a character count on page 5, key hints below.
+// the cursor, `label` and a character count on page 5, hints below.
 void TE_RenderText(const char *label);
 
 #endif

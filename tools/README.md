@@ -1,6 +1,6 @@
 # k5 command-line tools
 
-One `k5` command for flashing, EEPROM backup and talking to APRSK5's
+One `k5` command for flashing, EEPROM backup and talking to K5-APRS's
 debug console over the programming cable.
 
 ## Install
@@ -20,20 +20,20 @@ subcommand) or set `K5_PORT`. `k5 ports` shows what's connected.
 | Command | Radio must be running | What it does |
 |---|---|---|
 | `k5 ports` | – | list serial ports, `*` marks the likely cable |
-| `k5 flash [IMAGE]` | bootloader (hold PTT at power-on) | flash a raw `.bin`, default `build/aprsk5.bin` |
+| `k5 flash [IMAGE]` | bootloader (hold PTT at power-on) | flash a raw `.bin`, default `build/k5-aprs.bin` |
 | `k5 backup FILE` | stock / F4HWN | read the 8 KiB EEPROM (read-only) |
-| `k5 version` | APRSK5 | firmware version |
-| `k5 reg read 58 59` / `k5 reg write 58 33C3` | APRSK5 | BK4819 registers (hex) |
-| `k5 tune 144.390` | APRSK5 | tune (MHz) |
-| `k5 aprs [--log FILE]` | APRSK5 | print decoded packets live |
-| `k5 beacon show` / `k5 beacon set CALL-SSID --lat .. --lon ..` | APRSK5 | position beacon: callsign, symbol, position, path, comment |
-| `k5 send --from CALL ...` | APRSK5 | transmit test frames (needs a licence) |
-| `k5 config show` / `k5 config set --digi on --digi-hops 2 ...` | APRSK5 | TX delay/tail, digipeater, auto-beacon, message / TX / RX beeps (stored on the radio) |
-| `k5 kiss on/off [--freq]` | APRSK5 | switch the cable between the text console and KISS (or hold * on the radio) |
+| `k5 version` | K5-APRS | firmware version |
+| `k5 reg read 58 59` / `k5 reg write 58 33C3` | K5-APRS | BK4819 registers (hex) |
+| `k5 tune 144.390` | K5-APRS | tune (MHz) |
+| `k5 aprs [--log FILE]` | K5-APRS | print decoded packets live |
+| `k5 beacon show` / `k5 beacon set --call CALL-SSID [--lat .. --lon ..] [--type status --status TEXT] ...` | K5-APRS | beacon: callsign, symbol, position, path, comment, type (position / status / both), status text; shows what a beacon sends |
+| `k5 send --from CALL ...` | K5-APRS | transmit test frames (needs a licence) |
+| `k5 config show` / `k5 config set --digi on --digi-hops 2 ...` | K5-APRS | TX delay/tail, digipeater, auto-beacon, message / TX / RX beeps (stored on the radio) |
+| `k5 kiss on/off [--freq]` | K5-APRS | switch the cable between the text console and KISS (or hold * on the radio) |
 | `k5 kiss monitor` | KISS mode | print frames the radio passes to the host |
 | `k5 kiss send --from CALL ...` | KISS mode | transmit one frame through the TNC (CSMA) |
 | `k5 kiss serve [--tcp-port 8001]` | KISS mode | KISS-over-TCP server for APRS programs |
-| `k5 console` | APRSK5 | interactive console (`k5 console --help` lists commands) |
+| `k5 console` | K5-APRS | interactive console (`k5 console --help` lists commands) |
 
 Only one program can hold the serial port at a time.
 

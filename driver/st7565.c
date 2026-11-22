@@ -15,7 +15,7 @@
  */
 
 // ST7565 128x64 LCD over SPI0.
-// Modified for APRSK5: single 8-page framebuffer, F4HWN options removed.
+// Modified for K5-APRS: single 8-page framebuffer, F4HWN options removed.
 
 #include <stddef.h>
 #include <stdint.h>

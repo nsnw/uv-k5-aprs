@@ -15,7 +15,7 @@
  */
 
 // UART1 on the programming cable (38400 8N1).
-// Modified for APRSK5: RX DMA ring kept as upstream, the stock
+// Modified for K5-APRS: RX DMA ring kept as upstream, the stock
 // programming protocol removed; bytes are handed out one at a time.
 
 #include <string.h>

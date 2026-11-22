@@ -142,3 +142,17 @@ KEY_Code_t KEYBOARD_Poll(void)
 
     return Key;
 }
+
+void KEYBOARD_ReadRaw(uint16_t out[5])
+{
+    for (unsigned int j = 0; j < ARRAY_SIZE(keyboard); j++) {
+        GPIOA->DATA |=  1u << GPIOA_PIN_KEYBOARD_4 | 1u << GPIOA_PIN_KEYBOARD_5 |
+                        1u << GPIOA_PIN_KEYBOARD_6 | 1u << GPIOA_PIN_KEYBOARD_7;
+        GPIOA->DATA &= keyboard[j].set_to_zero_mask;
+        SYSTICK_DelayUs(1);
+        out[j] = (uint16_t)GPIOA->DATA;
+    }
+    I2C_Stop();
+    GPIO_ClearBit(&GPIOA->DATA, GPIOA_PIN_KEYBOARD_6);
+    GPIO_SetBit(  &GPIOA->DATA, GPIOA_PIN_KEYBOARD_7);
+}

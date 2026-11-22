@@ -4,10 +4,15 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-// APRS position beacon: fixed position, stored in EEPROM and set from the host
-// (`k5 beacon set`). Sent on demand from APRS mode (hold F).
+// APRS beacon: a position report (fixed position), a status report (">text",
+// no position: APRS101 ch. 16) or both, per the beacon type. Stored in
+// EEPROM, set on the radio (settings menu) or from the host (`k5 beacon set`).
+// Sent on demand (hold F) or automatically (station.h STATION_AUTOBEACON).
 //
-// EEPROM 0x0010-0x004F (see settings.h for the map).
+// Without a position (none typed in yet, e.g. a digipeater) a position
+// beacon falls back to the status report, so a callsign is all it needs.
+//
+// EEPROM 0x0010-0x004F BeaconConfig, 0x0C00-0x0C47 BeaconStatus (settings.h).
 
 #define BEACON_EEPROM_ADDR  0x0010
 #define BEACON_MAGIC        0x3142354Bu   // "K5B1"
@@ -28,12 +33,34 @@ typedef struct {
 
 _Static_assert(sizeof(BeaconConfig) == 64, "BeaconConfig must be 8 EEPROM pages");
 
+// Status report and beacon type, EEPROM 0x0C00.
+#define BEACON_STATUS_EEPROM_ADDR  0x0C00
+#define BEACON_STATUS_MAGIC        0x3154354Bu   // "K5T1"
+#define BEACON_STATUS_MAX          62            // APRS status text limit (no timestamp)
+
+typedef enum {
+    BEACON_TYPE_POSITION = 0,  // position report (status if no position is set)
+    BEACON_TYPE_STATUS,        // status report only
+    BEACON_TYPE_BOTH,          // both (just the status if no position is set)
+    BEACON_TYPE_COUNT
+} BeaconType;
+
+typedef struct {
+    uint32_t magic;
+    uint8_t  type;             // BeaconType
+    uint8_t  reserved[3];
+    char     text[64];         // up to BEACON_STATUS_MAX, NUL-terminated; "" = K5-APRS + version
+} BeaconStatus;
+
+_Static_assert(sizeof(BeaconStatus) == 72, "BeaconStatus must be 9 EEPROM pages");
+
 typedef enum {
     BEACON_QUEUED = 0,         // goes out when the channel is clear (txq.h)
     BEACON_NOT_CONFIGURED,
     BEACON_QUEUE_FULL,
     BEACON_TX_REFUSED,         // not a TX frequency (tx.h)
-    BEACON_NO_POSITION,        // callsign set on the radio, position not set yet
+    BEACON_NO_POSITION,        // a position was asked for (BEACON_SendPosition) but isn't set
+    BEACON_STATUS_QUEUED,      // queued, as a status report only
 } BeaconResult;
 
 void BEACON_Load(void);
@@ -43,11 +70,19 @@ const BeaconConfig *BEACON_Get(void);
 // Validates and stores a new configuration; false if invalid (nothing written).
 bool BEACON_Set(const BeaconConfig *cfg);
 
-// Builds the AX.25 frame (no FCS); returns its length, 0 if not configured.
-uint16_t BEACON_BuildFrame(uint8_t *out, uint16_t size);
+bool BEACON_HasPosition(void);                 // configured, with a position
+const BeaconStatus *BEACON_GetStatus(void);    // defaults (position, "") if never set
+bool BEACON_SetStatus(const BeaconStatus *s);  // validates and stores; false if invalid
 
-// Queues one beacon on the current frequency.
+// Build the AX.25 frames (no FCS); return the length, 0 if not configured /
+// no position. The status text is "K5-APRS <version>" when none is set.
+uint16_t BEACON_BuildFrame(uint8_t *out, uint16_t size);         // position report
+uint16_t BEACON_BuildStatusFrame(uint8_t *out, uint16_t size);   // status report
+
+// Queues a beacon on the current frequency, per the beacon type.
 BeaconResult BEACON_Send(void);
+BeaconResult BEACON_SendPosition(void);        // ?APRSP: the position report only
+BeaconResult BEACON_SendStatus(void);          // ?APRSS: the status report only
 
 // Auto-beacon (station.h STATION_AUTOBEACON): call once a second. The first
 // beacon goes BEACON_FIRST_S after boot or switching it on, then one every
@@ -55,5 +90,6 @@ BeaconResult BEACON_Send(void);
 #define BEACON_FIRST_S 10
 void BEACON_Poll1s(uint32_t now_s);
 void BEACON_RestartTimer(void);
+uint32_t BEACON_SecondsToNext(uint32_t now_s);   // 0 = none scheduled (auto-beacon off, or due)
 
 #endif

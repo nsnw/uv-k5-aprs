@@ -1,32 +1,47 @@
 // APRS station UI (this branch boots straight into APRS mode and stays there).
 //
-// Split view: status, decode frequency and RSSI on top; the four most
-// recently heard stations below.
-//   UP / DOWN    select station. A dot before the callsign: heard direct.
-//   *            list order: most recent first (with the age) / nearest
-//                first (with distance and direction; needs our position)
-//   MENU         station details: position, distance and bearing, speed,
-//                altitude, path, comment
-//   hold MENU    settings (menu.h): digipeater, beacon, TX timing, SSID
-//   EXIT         (details) back to the split view
-//   0-9          type a new frequency: * = decimal point, EXIT = delete
-//                (hold: cancel), MENU = OK. Amateur TX bands only (tx.h).
-//                In memory mode: go to that memory.
+// Four pages under the status bar; SIDE1 / SIDE2 go to the previous / next
+// (not while typing a message: SIDE1 is upper/lower case there).
+// The status bar has two lines on the pages: the second is the frequency (or
+// memory name) and a signal meter, and where a typed frequency shows.
+//   Stations  the heard stations. The home page: EXIT comes back here.
+//   Messages  the inbox (inbox.h)
+//   Radio     channel, signal, packet counts, next beacon, battery
+//   Packet    the latest packet heard, as TNC2 text
+//
+//   UP / DOWN    (stations) select a station. A dot before the callsign:
+//                heard direct.
+//   *            (stations) list order: most recent first (with the age) /
+//                nearest first (with distance and direction; needs our
+//                position)
+//   MENU         (stations) station details: position, distance and
+//                bearing, speed, altitude, path, comment
+//   hold MENU    settings (menu.h): digipeater and auto-beacon on/off,
+//                beacon, TX timing, SSID, beeps
+//   EXIT         back to the station list (from details or another page)
+//   0-9          type a new frequency (on the status bar): * = decimal
+//                point, EXIT = delete (hold: cancel), MENU = OK. Amateur TX
+//                bands only (tx.h). In memory mode: go to that memory.
 //   hold 0-9     recall that memory (memory.h; stored from the settings menu)
 //   hold EXIT    frequency / memory mode. Memory mode shows the memory's
 //                name in place of the frequency.
-//                After our own transmissions (beacon, messages, acks; not
-//                digipeats or KISS) a short beep, unless "TX beep" is off.
-//                "RX beep" (off by default): a low beep for a new station
-//                (NEW) or every new packet (ALL), not for digipeated copies.
-//   F (#)        message inbox (inbox.h); the status bar shows a blinking
-//                envelope while there are unread messages, and a new one
-//                beeps (unless turned off in the settings, "Msg beep")
-//   hold F (#)   queue our position beacon
+//   F (#)        messages page (on it: write a new message; in the station
+//                details: a message to that station); the status bar
+//                shows a blinking envelope
+//                while there are unread messages, and a new one beeps
+//                (unless turned off in the settings, "Msg beep")
+//   hold F (#)   queue our beacon (beacon.h: position and/or status)
 //   hold *       KISS TNC on/off on the programming cable (see kiss.h)
-//   SIDE1        digipeater on/off (digi.h)      } stored in EEPROM (station.h);
-//   SIDE2        auto-beacon on/off (beacon.h)   } status line icon cells D and B
 //   PTT          monitor
+//
+// The front LED: red while transmitting, a green flash for each packet,
+// green while monitoring, yellow while a frame waits to go out, a short
+// yellow blink every 2 s while messages are unread (UpdateLed).
+//
+// After our own transmissions (beacon, messages, acks; not digipeats or
+// KISS) a short beep, unless "TX beep" is off. "RX beep" (off by default):
+// a low beep for a new station (NEW) or every new packet (ALL), not for
+// digipeated copies. Status bar icons: digipeater and auto-beacon (only while on).
 
 #include <limits.h>
 #include <stdbool.h>
@@ -69,6 +84,11 @@
 #define NEW_MSG_TICKS       500   // 5 s for "MSG FROM-CALL"
 #define BATTERY_TICKS       50    // sample every 500 ms
 #define SPLASH_US           1000000
+#define RX_LED_TICKS        15    // 150 ms green flash for each packet decoded
+#define UNREAD_LED_PERIOD   200   // unread messages: a yellow blink every 2 s ...
+#define UNREAD_LED_ON       15    // ... 150 ms long
+#define LED_RED             1
+#define LED_GREEN           2
 
 static char     sEntry[ENTRY_MAX + 1];
 static uint8_t  sEntryLen;
@@ -88,8 +108,14 @@ static bool     sDirty = true;
 static bool     sTransmitting;   // TX queue has the transmitter keyed
 static bool     sMenuKeyDown;    // MENU pressed in the APRS view: details on release, settings on hold
 static bool     sFKeyDown;       // F pressed: inbox on release, beacon on hold
-static bool     sExitHeld;       // EXIT pressed in the split view: hold = memory mode
+static bool     sExitHeld;       // EXIT pressed (not typing): release = station list, hold = memory mode
 static bool     sStarKeyDown;    // * pressed (not typing): list order on release, KISS on hold
+static bool     sMsgFromDetail;  // writing a message started from the station details: go back there
+static uint8_t  sRxLedTicks;     // green flash left for the latest packet
+static uint8_t  sLed = 0xFF;     // LED_* last written; 0xFF = unknown (after transmitting)
+
+typedef enum { PAGE_STATIONS, PAGE_MESSAGES, PAGE_RADIO, PAGE_PACKET, PAGE_COUNT } Page;
+static uint8_t  sPage;           // Page
 
 // ---------------------------------------------------------------- helpers
 
@@ -258,6 +284,7 @@ static void SendBeacon(void)
     }
     switch (BEACON_Send()) {
     case BEACON_QUEUED:         ShowMessage("BEACON QUEUED");  break;
+    case BEACON_STATUS_QUEUED:  ShowMessage("STATUS QUEUED");  break;
     case BEACON_QUEUE_FULL:     ShowMessage("TX QUEUE FULL");  break;
     case BEACON_NOT_CONFIGURED: ShowMessage("NO BEACON SETUP"); break;
     case BEACON_TX_REFUSED:     ShowMessage("NOT A TX FREQ");  break;
@@ -265,23 +292,26 @@ static void SendBeacon(void)
     }
 }
 
-// SIDE1 / SIDE2: digipeater / auto-beacon on and off (stored in EEPROM).
-static void ToggleStation(uint8_t flag)
-{
-    if (!BEACON_IsConfigured()) {
-        ShowMessage("NO CALLSIGN SET");   // both need MYCALL: `k5 beacon set`
-        return;
-    }
-    const bool on = STATION_Toggle(flag);
-    if (flag == STATION_AUTOBEACON) {
-        BEACON_RestartTimer();
-        ShowMessage(on ? "AUTO BEACON ON" : "AUTO BEACON OFF");
-    } else {
-        ShowMessage(on ? "DIGIPEATER ON" : "DIGIPEATER OFF");
-    }
-}
-
 // ---------------------------------------------------------------- station list order
+
+// "VE6CXZ-1": MYCALL from the beacon configuration; false (and "") if unset.
+static bool MyCall(char out[10])
+{
+    out[0] = '\0';
+    if (!BEACON_IsConfigured())
+        return false;
+    const BeaconConfig *b = BEACON_Get();
+    uint8_t n = 0;
+    for (int i = 0; i < 6 && b->call[i] && b->call[i] != ' '; i++)
+        out[n++] = b->call[i];
+    if (b->ssid) {
+        out[n++] = '-';
+        if (b->ssid >= 10) out[n++] = '1';
+        out[n++] = (char)('0' + b->ssid % 10);
+    }
+    out[n] = '\0';
+    return true;
+}
 
 // Our position, if the beacon has one (distances need it).
 static bool OwnPosition(int32_t *lat, int32_t *lon)
@@ -356,21 +386,8 @@ static bool RxBeepWanted(void)
     if (mode == STATION_RX_BEEP_OFF || KISS_IsActive() || kind == APRS_RX_REPEAT
         || (mode == STATION_RX_BEEP_NEW && kind != APRS_RX_NEW_STATION))
         return false;
-    if (BEACON_IsConfigured()) {
-        const BeaconConfig *b = BEACON_Get();
-        char mine[10];
-        uint8_t n = 0;
-        for (int i = 0; i < 6 && b->call[i] && b->call[i] != ' '; i++) mine[n++] = b->call[i];
-        if (b->ssid) {
-            mine[n++] = '-';
-            if (b->ssid >= 10) mine[n++] = '1';
-            mine[n++] = (char)('0' + b->ssid % 10);
-        }
-        mine[n] = '\0';
-        if (!strcmp(APRS_GetStation(0)->source, mine))
-            return false;
-    }
-    return true;
+    char mine[10];
+    return !MyCall(mine) || strcmp(APRS_GetStation(0)->source, mine) != 0;
 }
 
 static void ToggleListOrder(void)
@@ -385,9 +402,24 @@ static void ToggleListOrder(void)
     sAprsTop = 0;
 }
 
+static void SetPage(uint8_t page)
+{
+    if (sPage == PAGE_MESSAGES)
+        INBOX_Close();
+    ClearEntry();
+    sAprsDetail = false;
+    sExitHeld   = false;
+    sPage       = page;
+    if (page == PAGE_MESSAGES)
+        INBOX_Open();
+    sDirty = true;
+}
+
 static void HandleKey(KeyEvent_t ev)
 {
     const KEY_Code_t k = ev.key;
+    const bool press  = ev.type == KEV_PRESS;
+    const bool repeat = ev.type == KEV_LONG || ev.type == KEV_REPEAT;
 
     if (k == KEY_PTT) {
         if (ev.type == KEV_PRESS)   RADIO_SetMonitor(true);
@@ -400,13 +432,17 @@ static void HandleKey(KeyEvent_t ev)
         MENU_HandleKey(ev);
         return;
     }
-    if (INBOX_IsOpen()) {
-        INBOX_HandleKey(ev);
+
+    // SIDE1 / SIDE2: previous / next page.
+    if ((k == KEY_SIDE1 || k == KEY_SIDE2) && !INBOX_IsComposing()) {
+        if (press)
+            SetPage((uint8_t)((sPage + (k == KEY_SIDE2 ? 1 : PAGE_COUNT - 1)) % PAGE_COUNT));
         return;
     }
 
-    // F: short press = message inbox (on release), hold = send our beacon.
-    if (k == KEY_F) {
+    // F: short press = messages page, or on it a new message (on release);
+    // hold = send our beacon. (Typing a message, F belongs to the editor.)
+    if (k == KEY_F && !INBOX_IsComposing()) {
         if (ev.type == KEV_PRESS) {
             sFKeyDown = true;
         } else if (ev.type == KEV_LONG && sFKeyDown) {
@@ -414,14 +450,36 @@ static void HandleKey(KeyEvent_t ev)
             SendBeacon();
         } else if (ev.type == KEV_RELEASE && sFKeyDown) {
             sFKeyDown = false;
-            INBOX_Open();
+            if (sPage == PAGE_MESSAGES) {
+                INBOX_Compose();
+            } else if (sPage == PAGE_STATIONS && sAprsDetail && APRS_StationCount()) {
+                char call[10];          // a message to the station in the details
+                memcpy(call, APRS_GetStation((uint8_t)AprsSelectedIndex())->source, sizeof call);
+                SetPage(PAGE_MESSAGES);
+                INBOX_ComposeTo(call);
+                sMsgFromDetail = true;
+            } else {
+                SetPage(PAGE_MESSAGES);
+            }
         }
         sDirty = true;
         return;
     }
 
-    // * (not typing a frequency): short press = list order on release,
-    // hold = KISS TNC on / off.
+    if (INBOX_IsOpen()) {
+        INBOX_HandleKey(ev);
+        if (sMsgFromDetail && !INBOX_IsComposing()) {   // sent or cancelled: back to the station
+            sMsgFromDetail = false;
+            SetPage(PAGE_STATIONS);
+            sAprsDetail = APRS_StationCount() != 0;
+        } else if (!INBOX_IsOpen()) {   // EXIT from the message list
+            SetPage(PAGE_STATIONS);
+        }
+        return;
+    }
+
+    // * (not typing a frequency): short press = list order on release (on
+    // the station list), hold = KISS TNC on / off.
     if (k == KEY_STAR && (sStarKeyDown || !sEntryLen)) {
         if (ev.type == KEV_PRESS) {
             sStarKeyDown = true;
@@ -430,14 +488,15 @@ static void HandleKey(KeyEvent_t ev)
             if (KISS_IsActive()) KISS_Exit(); else KISS_Enter();
         } else if (ev.type == KEV_RELEASE && sStarKeyDown) {
             sStarKeyDown = false;
-            ToggleListOrder();
+            if (sPage == PAGE_STATIONS)
+                ToggleListOrder();
         }
         sDirty = true;
         return;
     }
 
     // MENU (not confirming a typed frequency): short press = station details
-    // on release, hold = settings.
+    // on release (on the station list), hold = settings.
     if (k == KEY_MENU && (sMenuKeyDown || !sEntryLen)) {
         if (ev.type == KEV_PRESS) {
             sMenuKeyDown = true;
@@ -446,15 +505,32 @@ static void HandleKey(KeyEvent_t ev)
             MENU_Open();
         } else if (ev.type == KEV_RELEASE && sMenuKeyDown) {
             sMenuKeyDown = false;
-            if (APRS_StationCount())
+            if (sPage == PAGE_STATIONS && APRS_StationCount())
                 sAprsDetail = true;
             sDirty = true;
         }
         return;
     }
 
-    const bool press  = ev.type == KEV_PRESS;
-    const bool repeat = ev.type == KEV_LONG || ev.type == KEV_REPEAT;
+    // EXIT (not typing): back to the station list on release, from the
+    // details or another page; hold = frequency / memory mode.
+    if (k == KEY_EXIT && !sEntryLen) {
+        if (press && sAprsDetail) {
+            sAprsDetail = false;            // in the details view EXIT only goes back
+        } else if (press) {
+            sExitHeld = true;
+        } else if (ev.type == KEV_LONG && sExitHeld) {
+            sExitHeld = false;
+            ToggleMemoryMode();
+        } else if (ev.type == KEV_RELEASE && sExitHeld) {
+            sExitHeld = false;
+            if (sPage != PAGE_STATIONS)
+                SetPage(PAGE_STATIONS);
+        }
+        sDirty = true;
+        return;
+    }
+
     if (!press && !repeat)
         return;
 
@@ -466,8 +542,8 @@ static void HandleKey(KeyEvent_t ev)
         return;
     }
 
-    // Typing a frequency (split view): digits, * as the point, EXIT
-    // deletes (hold: cancel), MENU confirms. Retunes the decoder.
+    // Typing a frequency (on the status bar's second line, any page): digits,
+    // * as the point, EXIT deletes (hold: cancel), MENU confirms.
     if (!sAprsDetail && (k <= KEY_9 || (sEntryLen && (k == KEY_STAR || k == KEY_EXIT || k == KEY_MENU)))) {
         if (k <= KEY_9) {
             const char digit = (char)('0' + (k - KEY_0));
@@ -487,22 +563,12 @@ static void HandleKey(KeyEvent_t ev)
             ClearEntry();
         } else {
             sEntry[--sEntryLen] = '\0';
-            sExitHeld = false;              // deleting, not switching modes
         }
         sDirty = true;
         return;
     }
-    if (k == KEY_SIDE1 && press) {
-        ToggleStation(STATION_DIGI);
-    } else if (k == KEY_SIDE2 && press) {
-        ToggleStation(STATION_AUTOBEACON);
-    } else if (k == KEY_EXIT && press) {
-        sExitHeld   = !sAprsDetail;         // in the details view EXIT only goes back
-        sAprsDetail = false;
-    } else if (k == KEY_EXIT && ev.type == KEV_LONG && sExitHeld) {
-        sExitHeld = false;
-        ToggleMemoryMode();
-    } else if (k == KEY_UP || k == KEY_DOWN) {
+
+    if ((k == KEY_UP || k == KEY_DOWN) && sPage == PAGE_STATIONS) {
         uint8_t order[APRS_MAX_STATIONS];
         const int n = ListOrder(order), sel = AprsSelectedIndex();
         int row = 0;
@@ -514,90 +580,66 @@ static void HandleKey(KeyEvent_t ev)
     sDirty = true;
 }
 
+// ---------------------------------------------------------------- the LED
+
+// The front LED (BK4819 GPIO5 red, GPIO6 green; both = yellow), most
+// important first: red while transmitting (tx.c sets it itself), a green
+// flash for each packet, green while monitoring, yellow while something
+// waits to go out, a short yellow blink every 2 s while messages are unread.
+static void UpdateLed(void)
+{
+    static uint8_t phase;
+    phase = (uint8_t)((phase + 1) % UNREAD_LED_PERIOD);
+    uint8_t led = 0;
+    if (sRxLedTicks) {
+        sRxLedTicks--;
+        led = LED_GREEN;
+    } else if (RADIO_IsAudioOpen()) {
+        led = LED_GREEN;
+    } else if (TXQ_Count()) {
+        led = LED_RED | LED_GREEN;
+    } else if (MSG_Unread() && phase < UNREAD_LED_ON) {
+        led = LED_RED | LED_GREEN;
+    }
+    if (led == sLed)
+        return;
+    sLed = led;
+    BK4819_ToggleGpioOut(BK4819_GPIO5_PIN1_RED, led & LED_RED);
+    BK4819_ToggleGpioOut(BK4819_GPIO6_PIN2_GREEN, led & LED_GREEN);
+}
+
 // ---------------------------------------------------------------- drawing
 
 
-// Big digits (one pixel short) on `page` and page+1, left-aligned; the entry
-// hint goes on page+2.
-// Memory mode: the name (or "MEM n") double size where the frequency goes,
-// the frequency small below the signal meter.
-static void DrawMemory(uint8_t page, const MemoryEntry *m)
+// "144.390" (3 decimals; 2 from 1000 MHz). Buffer of at least 9 bytes.
+static void FormatMHz(uint32_t f, char *out)
 {
-    char name[MEM_NAME_LEN + 1];
-    uint8_t len = 0;
-    for (int i = 0; i < MEM_NAME_LEN && m->name[i] != ' '; i++) name[len++] = m->name[i];
-    name[len] = '\0';
-    if (!len) {
-        strcpy(name, "MEM ");
-        name[4] = (char)('0' + gSettings.memory - 1);
-        name[5] = '\0';
-    }
-    GFX_TextDouble(0, (uint8_t)(page * 8 + 2), name);   // the same top row as the big digits
-
-    const uint32_t f = gSettings.frequency, mhz = f / 100000;
-    char freq[10];
+    const uint32_t mhz = f / 100000;
     const uint8_t mw = mhz >= 1000 ? 4 : mhz >= 100 ? 3 : mhz >= 10 ? 2 : 1;
-    U32ToDec(mhz, freq, mw);
-    freq[mw] = '.';
-    U32ToDec(f % 100000 / (mhz >= 1000 ? 1000 : 100), freq + mw + 1, mhz >= 1000 ? 2 : 3);
-    GFX_TextRight(LCD_WIDTH, page + 1, freq);
+    U32ToDec(mhz, out, mw);
+    out[mw] = '.';
+    U32ToDec(f % 100000 / (mhz >= 1000 ? 1000 : 100), out + mw + 1, mhz >= 1000 ? 2 : 3);
 }
 
-static void DrawFrequency(uint8_t page)
+// The memory's name ("" if none or blank) for the current frequency.
+static void MemoryName(char out[MEM_NAME_LEN + 1])
 {
-    const MemoryEntry *mem = CurrentMemory();
-    if (mem && !sEntryLen) {
-        DrawMemory(page, mem);
-        return;
-    }
-    char big[ENTRY_MAX + 2];
-    char small[3] = { 0 };
-    uint8_t n = 0;
-
-    if (sEntryLen) {
-        // what has been typed so far, with the implied point, and a '-' cursor
-        const char *mhz, *frac;
-        uint8_t mhz_len, frac_len;
-        SplitEntry(&mhz, &mhz_len, &frac, &frac_len);
-        memcpy(big + n, mhz, mhz_len);
-        n += mhz_len;
-        if (frac_len || memchr(sEntry, '.', sEntryLen))
-            big[n++] = '.';
-        memcpy(big + n, frac, frac_len);
-        n += frac_len;
-        big[n++] = '-';
-        big[n] = '\0';
-        GFX_Text(0, page + 2, GFX_KEY_MENU " OK " GFX_KEY_EXIT " DEL");
-    } else {
-        // MHz without leading zeros, then 3 decimals big and 2 decimals small
-        const uint32_t f = gSettings.frequency;
-        char frac[FRAC_DIGITS + 1];
-        char mhz[6];
-        const uint32_t m = f / 100000;
-        U32ToDec(m, mhz, m >= 1000 ? 4 : (m >= 100 ? 3 : (m >= 10 ? 2 : 1)));
-        U32ToDec(f % 100000, frac, FRAC_DIGITS);
-        for (char *p = mhz; *p; p++) big[n++] = *p;
-        big[n++] = '.';
-        memcpy(big + n, frac, 3);
-        n += 3;
-        big[n] = '\0';
-        small[0] = frac[3];
-        small[1] = frac[4];
-    }
-
-    const uint8_t x = GFX_BigDigitsShort(0, page, big);
-    // On a memory its name goes at the right, in place of the 10 Hz digits.
-    const int slot = sEntryLen ? -1 : MEM_Find(gSettings.frequency);
+    const int slot = MEM_Find(gSettings.frequency);
     const MemoryEntry *m = slot >= 0 ? MEM_Get((uint8_t)slot) : NULL;
-    char name[MEM_NAME_LEN + 1];
     uint8_t len = 0;
     if (m)
-        for (int i = 0; i < MEM_NAME_LEN && m->name[i] != ' '; i++) name[len++] = m->name[i];
-    name[len] = '\0';
-    if (len)
-        GFX_TextRight(LCD_WIDTH, page + 1, name);
-    else if (small[0])
-        GFX_Text(x + 1, page + 1, small);
+        for (int i = 0; i < MEM_NAME_LEN && m->name[i] != ' '; i++) out[len++] = m->name[i];
+    out[len] = '\0';
+}
+
+// Signal meter, `w` px wide from x0 on `page` (rows 2-5): -130 .. -50 dBm.
+static void DrawMeter(uint8_t page, uint8_t x0, uint8_t w)
+{
+    const int16_t lo = -130, hi = -50;
+    const int16_t r = sRssi_dBm < lo ? lo : (sRssi_dBm > hi ? hi : sRssi_dBm);
+    const uint8_t len = (uint8_t)((r - lo) * w / (hi - lo));
+    for (uint8_t i = 0; i < w; i++)   // OR: keep anything already there (the divider)
+        gFrameBuffer[page][x0 + i] |= (i < len) ? ((i % 3 == 2) ? 0x00 : 0x3C) : ((i % 3 == 0) ? 0x20 : 0x00);
 }
 
 // Draws `s` across consecutive pages, `cols` characters per line.
@@ -650,7 +692,7 @@ static void StationRow(uint8_t page, const AprsStation *st, bool selected, bool 
 {
     if (st->flags & APRS_ST_DIRECT)
         GFX_Text(0, page, GFX_ICON_DOT);
-    const uint8_t end = GFX_Text(5, page, st->source);
+    const uint8_t end = GFX_TextBold(5, page, st->source);
     char right[16];
     uint32_t m;
     uint16_t b;
@@ -686,19 +728,22 @@ static void RenderAprsList(uint8_t first_page, uint8_t rows)
         StationRow(first_page + r, APRS_GetStation(order[sAprsTop + r]), sAprsTop + r == row, distance);
 }
 
-// Details: the callsign, symbol and age on top; then position (with the
-// distance and bearing from us at the right), speed / course / altitude,
-// how it was heard and the comment.
+// Details (divided, gfx.h): the callsign, symbol and age on top; then
+// position (with the distance and bearing from us at the right), speed /
+// course / altitude, how it was heard and the comment, as many as fit. The
+// motion line only if there is one; "direct" not at all (the dot says so).
 static void RenderAprsDetail(const AprsStation *st)
 {
     char buf[32];
+    const uint8_t head = APP_TOP_PAGE, last = GFX_LAST_BODY_PAGE;
+    uint8_t row = head + 1;
     if (st->flags & APRS_ST_DIRECT)
-        GFX_Text(0, 2, GFX_ICON_DOT);
-    const uint8_t x = GFX_Text(5, 2, st->source);
+        GFX_Text(0, head, GFX_ICON_DOT);
+    const uint8_t x = GFX_TextBold(5, head, st->source);
     StationAge(st, buf);
-    GFX_TextRight(LCD_WIDTH - 1, 2, buf);
+    GFX_TextRightBold(LCD_WIDTH - 1, head, buf);
 
-    char via[24] = "direct";
+    char via[24] = "";
     if (!(st->flags & APRS_ST_DIRECT)) {
         strcpy(via, st->via[0] ? "via " : "via digipeater");
         strcat(via, st->via);
@@ -706,33 +751,35 @@ static void RenderAprsDetail(const AprsStation *st)
 
     const AprsInfo *in = &st->info;
     if (!in->has_position) {
-        GFX_InvertPage(2, 0, LCD_WIDTH - 1);
-        DrawWrapped(st->comment, 3, 6);
-        GFX_Text(0, 7, via);
+        DrawWrapped(st->comment, row, via[0] ? last - 1 : last);
+        if (via[0])
+            GFX_Text(0, last, via);
+        GFX_Divide(head);
         return;
     }
     buf[0] = in->symbol_table;   // APRS symbol, e.g. "/>" car, "/[" person
     buf[1] = in->symbol;
     buf[2] = '\0';
-    GFX_Text(x + 4, 2, buf);
-    GFX_InvertPage(2, 0, LCD_WIDTH - 1);
+    GFX_TextBold(x + 4, head, buf);
 
-    APRS_FormatLat(in->lat, buf);
-    GFX_Text(0, 3, buf);
+    buf[0] = ' ';                               // " 51 02.14N": lines up with "114 05.67W"
+    APRS_FormatLat(in->lat, buf + 1);
+    GFX_Text(0, row, buf);
     APRS_FormatLon(in->lon, buf);
-    GFX_Text(0, 4, buf);
+    GFX_Text(0, row + 1, buf);
     uint32_t m;
     uint16_t b;
     if (StationDistance(st, &m, &b)) {
         GEO_FormatDistance(m, buf);
-        GFX_TextRight(LCD_WIDTH, 3, buf);
+        GFX_TextRight(LCD_WIDTH, row, buf);
         buf[0] = (char)('0' + b / 100);          // "047 NE"
         buf[1] = (char)('0' + b / 10 % 10);
         buf[2] = (char)('0' + b % 10);
         buf[3] = ' ';
         strcpy(buf + 4, GEO_Compass(b));
-        GFX_TextRight(LCD_WIDTH, 4, buf);
+        GFX_TextRight(LCD_WIDTH, row + 1, buf);
     }
+    row += 2;
 
     buf[0] = '\0';
     if (in->speed_kmh != APRS_UNKNOWN_I16)
@@ -741,36 +788,51 @@ static void RenderAprsDetail(const AprsStation *st)
         AppendInt(buf, in->course, "d ");
     if (in->altitude_m != INT32_MIN)
         AppendInt(buf, in->altitude_m, "m");
-    GFX_Text(0, 5, buf);
-
-    GFX_Text(0, 6, via);
-    DrawWrapped(st->comment, 7, 7);
+    if (buf[0])
+        GFX_Text(0, row++, buf);
+    if (via[0] && row <= last)
+        GFX_Text(0, row++, via);
+    if (row <= last)
+        DrawWrapped(st->comment, row, row);
+    GFX_Divide(head);
 }
 
-// Status icon: two cells in one box, D(igipeater) | B(eacon). Filled cell
-// with the letter cut out = on; plain letter = off. They blink between the
-// two when on but this isn't a TX frequency. 15 x 7 px.
-static const uint8_t TINY_D[3] = { 0x1F, 0x11, 0x0E };   // 3 x 5 px letters
-static const uint8_t TINY_B[3] = { 0x1F, 0x15, 0x0A };
+// Status bar. Page 0 on every screen, left to right:
+//   MYCALL (or KISS: the host is the station)
+//   digipeater (two arrows) and auto-beacon (a map pin), only while on;
+//     they blink if on but this isn't a TX frequency
+//   a blinking envelope while there are unread messages
+//   the speaker
+//   the battery, upright
+// On the pages, a second line (page 1): the frequency (memory mode: the
+// memory's name instead, or "MEM n"), a signal meter and the page number
+// ("2/4", tiny digits) at the right; while typing a frequency, what's typed
+// and the key hints.
+#define X_DIGI      81
+#define X_BEACON    90
+#define X_ENVELOPE  98
+#define X_SPEAKER   110     // 109-121 while inverted
+#define X_BATTERY   123     // to the right edge
+#define PAGE_NUM_W  11      // "2/4", right-aligned on the second line
+#define METER_W     30      // ten bars, left of the page number
+#define X_METER     (LCD_WIDTH - PAGE_NUM_W - 2 - METER_W)
 
-typedef enum { CELL_OFF, CELL_LIT } CellState;
-
-static void DrawCell(uint8_t x, const uint8_t *glyph, CellState st)
+static void DrawIcon(uint8_t x, const uint8_t *cols, uint8_t w)
 {
-    uint8_t *fb = &gFrameBuffer[0][x];
-    for (uint8_t i = 0; i < 6; i++) {           // interior columns; borders drawn by the caller
-        const uint8_t g = (i >= 1 && i <= 3) ? (uint8_t)(glyph[i - 1] << 1) : 0;
-        fb[i] = st == CELL_LIT ? (uint8_t)(0x7F ^ g) : (uint8_t)(0x41 | g);
-    }
+    for (uint8_t i = 0; i < w; i++)
+        gFrameBuffer[0][x + i] |= cols[i];
 }
 
-static void DrawStatusIcon(uint8_t x, uint8_t flags, bool can_tx)
+static void DrawStationIcons(uint8_t flags, bool can_tx)
 {
-    for (uint8_t i = 0; i < 3; i++)             // outer and divider lines
-        gFrameBuffer[0][x + i * 7] = 0x7F;
-    const CellState on = (can_tx || (APRS_NowSeconds() & 1)) ? CELL_LIT : CELL_OFF;
-    DrawCell(x + 1, TINY_D, (flags & STATION_DIGI) ? on : CELL_OFF);
-    DrawCell(x + 8, TINY_B, (flags & STATION_AUTOBEACON) ? on : CELL_OFF);
+    static const uint8_t DIGI[7] = { 0x22, 0x72, 0x22, 0x22, 0x22, 0x27, 0x22 };   // arrows both ways
+    static const uint8_t PIN[5]  = { 0x0E, 0x11, 0x25, 0x11, 0x0E };               // map pin
+    if (!can_tx && (APRS_NowSeconds() & 1))
+        return;
+    if (flags & STATION_DIGI)
+        DrawIcon(X_DIGI, DIGI, sizeof DIGI);
+    if (flags & STATION_AUTOBEACON)
+        DrawIcon(X_BEACON, PIN, sizeof PIN);
 }
 
 // Speaker: with sound waves while a packet is coming in or monitor is on,
@@ -789,9 +851,8 @@ static void DrawSpeaker(uint8_t x)
             gFrameBuffer[0][i] ^= 0x7F;
 }
 
-// Battery outline with four bars, right-aligned: 2S Li-ion, 6.8 V empty to
-// 8.2 V full. The empty outline blinks.
-#define BATTERY_W 17
+// Upright battery, 5 x 7 px: the terminal on top, four bars filling from
+// the bottom (2S Li-ion, 6.8 V empty to 8.2 V full). The empty outline blinks.
 static void DrawBattery(void)
 {
     const int32_t v = BATTERY_Get10mV();
@@ -799,84 +860,175 @@ static void DrawBattery(void)
     bars = bars < 0 ? 0 : bars > 4 ? 4 : bars;
     if (bars == 0 && (APRS_NowSeconds() & 1))
         return;
-    uint8_t *fb = &gFrameBuffer[0][LCD_WIDTH - BATTERY_W];
-    fb[0] = fb[14] = 0x7F;
-    for (uint8_t i = 1; i < 14; i++) {
-        const uint8_t bar = (uint8_t)((i - 2) / 3), in_bar = (uint8_t)((i - 2) % 3) < 2;
-        fb[i] = (uint8_t)(0x41 | ((i >= 2 && i <= 12 && in_bar && bar < bars) ? 0x1C : 0));
-    }
-    fb[15] = fb[16] = 0x1C;                     // terminal
+    const uint8_t fill = (uint8_t)((0x3C << (4 - bars)) & 0x3C);   // rows 5, 4, 3, 2
+    uint8_t *fb = &gFrameBuffer[0][X_BATTERY];
+    fb[0] = fb[4] = 0x7E;                       // sides, rows 1-6
+    fb[1] = fb[2] = fb[3] = (uint8_t)(0x01 | 0x02 | 0x40 | fill);   // terminal, top, bottom
 }
 
-// Split view: status line (MYCALL or KISS, status icon, battery), the decode
-// frequency with a small signal meter, then the most recently heard stations.
-// Page 0 on every screen: MYCALL (or KISS: the host is the station), the
-// status icon and the battery.
+// "2/4" in 3 x 5 digits (rows 1-5 of `page`), right-aligned.
+static void DrawPageNumber(uint8_t page)
+{
+    static const uint8_t TINY[10][3] = {
+        { 0x30, 0x08, 0x06 },                                       // '/'
+        { 0x24, 0x3E, 0x20 }, { 0x32, 0x2A, 0x24 }, { 0x22, 0x2A, 0x14 },
+        { 0x0E, 0x08, 0x3E }, { 0x2E, 0x2A, 0x12 }, { 0x3C, 0x2A, 0x3A },
+        { 0x02, 0x3A, 0x06 }, { 0x3E, 0x2A, 0x3E }, { 0x2E, 0x2A, 0x1E },
+    };
+    _Static_assert(PAGE_COUNT <= 9, "one digit");
+    const uint8_t glyphs[3] = { (uint8_t)(sPage + 1), 0, PAGE_COUNT };
+    uint8_t x = LCD_WIDTH - PAGE_NUM_W;
+    for (uint8_t g = 0; g < 3; g++, x += 4)
+        for (uint8_t i = 0; i < 3; i++)
+            gFrameBuffer[page][x + i] |= TINY[glyphs[g]][i];
+}
+
+static void DrawFrequencyLine(void)
+{
+    char buf[ENTRY_MAX + 2];
+    if (sEntryLen) {
+        // what has been typed so far, with the implied point, and a '-' cursor
+        const char *mhz, *frac;
+        uint8_t mhz_len, frac_len, n = 0;
+        SplitEntry(&mhz, &mhz_len, &frac, &frac_len);
+        memcpy(buf + n, mhz, mhz_len);
+        n += mhz_len;
+        if (frac_len || memchr(sEntry, '.', sEntryLen))
+            buf[n++] = '.';
+        memcpy(buf + n, frac, frac_len);
+        n += frac_len;
+        buf[n++] = '-';
+        buf[n] = '\0';
+        GFX_TextBold(0, 1, buf);
+        GFX_TextRight(LCD_WIDTH - 1, 1, GFX_KEY_MENU " OK " GFX_KEY_EXIT " DEL");
+        return;
+    }
+    if (gSettings.memory) {                     // memory mode: the memory's name
+        char name[MEM_NAME_LEN + 1];
+        MemoryName(name);
+        if (!name[0]) {
+            strcpy(name, "MEM ");
+            name[4] = (char)('0' + gSettings.memory - 1);
+            name[5] = '\0';
+        }
+        GFX_TextBold(0, 1, name);
+    } else {                                    // frequency mode: the frequency
+        FormatMHz(gSettings.frequency, buf);
+        GFX_TextBold(0, 1, buf);
+    }
+    DrawMeter(1, X_METER, METER_W);
+    DrawPageNumber(1);
+}
+
+// Two lines on the pages; one in the settings and while typing a message.
+static bool TwoLineStatus(void)
+{
+    return !MENU_IsOpen() && !INBOX_IsComposing();
+}
+
 static void DrawStatusBar(void)
 {
-    char buf[16];
-    if (KISS_IsActive()) {
-        GFX_Text(0, 0, "KISS");
-    } else if (BEACON_IsConfigured()) {
-        const BeaconConfig *b = BEACON_Get();
-        uint8_t n = 0;
-        for (int i = 0; i < 6 && b->call[i] && b->call[i] != ' '; i++)
-            buf[n++] = b->call[i];
-        if (b->ssid) {
-            buf[n++] = '-';
-            if (b->ssid >= 10) buf[n++] = '1';
-            buf[n++] = (char)('0' + b->ssid % 10);
-        }
-        buf[n] = '\0';
-        GFX_Text(0, 0, buf);
-    } else {
-        GFX_Text(0, 0, "NO CALL");
-    }
+    char buf[10];
+    GFX_TextBold(0, 0, KISS_IsActive() ? "KISS" : MyCall(buf) ? buf : "NO CALL");
 #ifdef ENABLE_TX
     const bool can_tx = TX_IsAllowedFrequency(gSettings.frequency);
 #else
     const bool can_tx = false;
 #endif
-    DrawStatusIcon(66, STATION_Get()->flags, can_tx);
-    DrawSpeaker(88);
-    if (MSG_Unread() && (APRS_NowSeconds() & 1)) {   // blinking envelope: unread messages (F opens the inbox)
+    DrawStationIcons(STATION_Get()->flags, can_tx);
+    if (MSG_Unread() && (APRS_NowSeconds() & 1)) {   // blinking envelope: unread messages (F opens them)
         static const uint8_t ENVELOPE[9] = { 0x7F, 0x43, 0x45, 0x49, 0x51, 0x49, 0x45, 0x43, 0x7F };
-        memcpy(&gFrameBuffer[0][101], ENVELOPE, sizeof ENVELOPE);
+        memcpy(&gFrameBuffer[0][X_ENVELOPE], ENVELOPE, sizeof ENVELOPE);
     }
+    DrawSpeaker(X_SPEAKER);
     DrawBattery();
-    GFX_HLine(0, LCD_WIDTH - 1, 8);    // the divider: also the status icon's bottom edge
-}
-
-static void RenderAprsSplit(void)
-{
-    // (the status bar's divider is at y = 8; the short big digits start two pixels below)
-
-    DrawFrequency(1);
-    uint8_t first_row = 3;
-    if (sEntryLen) {
-        first_row = 4;                 // the entry hint is on page 3
-    } else if (gSettings.frequency < 100000000) {   // 4-digit MHz would overlap the meter
-        // 30 px bar, -130 .. -50 dBm
-        const int16_t lo = -130, hi = -50;
-        const int16_t r = sRssi_dBm < lo ? lo : (sRssi_dBm > hi ? hi : sRssi_dBm);
-        const uint8_t w = 30, x0 = LCD_WIDTH - w, len = (uint8_t)((r - lo) * w / (hi - lo));
-        for (uint8_t i = 0; i < w; i++)
-            gFrameBuffer[1][x0 + i] |= (i < len) ? ((i % 3 == 2) ? 0x00 : 0x3C) : ((i % 3 == 0) ? 0x20 : 0x00);   // OR: keep the divider
-    }
-
-    if (APRS_StationCount() == 0)
-        GFX_Text(28, 5, "listening...");
-    else
-        RenderAprsList(first_row, (uint8_t)(LCD_PAGES - first_row));
-}
-
-static void RenderAprs(void)
-{
-    if (sAprsDetail && APRS_StationCount()) {
-        RenderAprsDetail(APRS_GetStation((uint8_t)AprsSelectedIndex()));
+    if (TwoLineStatus()) {
+        DrawFrequencyLine();
+        GFX_HLine(0, LCD_WIDTH - 1, APP_TOP_PAGE * 8);   // the divider
     } else {
-        RenderAprsSplit();
+        GFX_HLine(0, LCD_WIDTH - 1, 8);
     }
+}
+
+// Label at the left of `page`, value at the right.
+static void InfoRow(uint8_t page, const char *label, const char *value)
+{
+    GFX_Text(0, page, label);
+    GFX_TextRight(LCD_WIDTH - 1, page, value);
+}
+
+// Stations page: the list, straight under the status bar (its second line
+// has the frequency).
+static void RenderStations(void)
+{
+    if (APRS_StationCount() == 0)
+        GFX_Text(28, APP_TOP_PAGE + 2, "listening...");
+    else
+        RenderAprsList(APP_TOP_PAGE, GFX_LAST_BODY_PAGE - APP_TOP_PAGE + 1);
+    GFX_Lower(APP_TOP_PAGE);
+}
+
+// Radio page (divided, gfx.h): the channel on top; signal, packets heard
+// and sent, next beacon and battery.
+static void RenderRadio(void)
+{
+    char buf[24];
+    const uint8_t head = APP_TOP_PAGE, b = head + 1;
+    GFX_TextBold(0, head, "Channel");
+    GFX_TextRightBold(LCD_WIDTH - 1, head, CHANNEL_IsBusy() ? "busy" : "clear");
+
+    buf[0] = '\0';
+    AppendInt(buf, sRssi_dBm, "dBm");
+    InfoRow(b, "Signal", buf);
+
+    strcpy(buf, "Heard ");                      // packets decoded / transmitted
+    AppendInt(buf, APRS_TotalDecoded(), "");
+    char sent[12] = "";
+#ifdef ENABLE_TX
+    strcpy(sent, "Sent ");
+    AppendInt(sent, gTxStats.attempts, "");
+#endif
+    InfoRow(b + 1, buf, sent);
+
+    const uint32_t next = BEACON_SecondsToNext(APRS_NowSeconds());
+    if (!(STATION_Get()->flags & STATION_AUTOBEACON)) {
+        strcpy(buf, "off");
+    } else if (next) {
+        strcpy(buf, "in ");
+        FormatAge(next, buf + 3);
+    } else {
+        strcpy(buf, "soon");
+    }
+    InfoRow(b + 2, "Beacon", buf);
+
+    const uint16_t v = BATTERY_Get10mV();
+    buf[0] = (char)('0' + v / 100 % 10);
+    buf[1] = '.';
+    buf[2] = (char)('0' + v / 10 % 10);
+    buf[3] = (char)('0' + v % 10);
+    buf[4] = 'V';
+    buf[5] = '\0';
+    InfoRow(b + 3, "Battery", buf);
+    GFX_Divide(head);
+}
+
+// Packet page (divided, gfx.h): the latest packet heard, as TNC2 text, and
+// how long ago.
+static void RenderPacket(void)
+{
+    uint32_t heard;
+    const char *line = APRS_LastPacket(&heard);
+    const uint8_t head = APP_TOP_PAGE;
+    GFX_TextBold(0, head, "Last packet");
+    if (!line[0]) {
+        GFX_Text(4, head + 2, "nothing heard yet");
+    } else {
+        char age[8];
+        FormatAge(APRS_NowSeconds() - heard, age);
+        GFX_TextRightBold(LCD_WIDTH - 1, head, age);
+        DrawWrapped(line, head + 1, GFX_LAST_BODY_PAGE);
+    }
+    GFX_Divide(head);
 }
 
 static void Render(void)
@@ -884,10 +1036,16 @@ static void Render(void)
     GFX_Clear();
     if (MENU_IsOpen())
         MENU_Render();
-    else if (INBOX_IsOpen())
+    else if (sPage == PAGE_MESSAGES)
         INBOX_Render();
+    else if (sPage == PAGE_RADIO)
+        RenderRadio();
+    else if (sPage == PAGE_PACKET)
+        RenderPacket();
+    else if (sAprsDetail && APRS_StationCount())
+        RenderAprsDetail(APRS_GetStation((uint8_t)AprsSelectedIndex()));
     else
-        RenderAprs();
+        RenderStations();
     DrawStatusBar();                   // after the content: the menu shifts its pages down
 
     if (sMessage) {
@@ -926,21 +1084,39 @@ void APP_ShowMessage(const char *msg, bool now)
 void APP_SetTransmitting(bool on)
 {
     sTransmitting = on;
+    sLed = 0xFF;                       // tx.c drives red itself: rewrite the LED afterwards
     if (on)
         Render();
     else
         sDirty = true;
 }
 
+static void CentreDouble(uint8_t y, const char *s)
+{
+    const uint8_t w = GFX_TextDoubleWidth(s);
+    GFX_TextDouble(w < LCD_WIDTH ? (uint8_t)((LCD_WIDTH - w) / 2) : 0, y, s);
+}
+
+// A title bar, white on black, with K5-APRS centred in it (double size);
+// the version under it (small, centred, not inverted); then this radio's
+// callsign (double size, centred: tells two radios apart at a glance).
 static void Splash(void)
 {
+    char call[10];
     GFX_Clear();
-    static const char *const lines[] = { "v" VERSION_STRING, "Andy Smith VE6LY" };
-    GFX_TextDouble((uint8_t)((LCD_WIDTH - GFX_TextDoubleWidth(APP_NAME)) / 2), 12, APP_NAME);
-    for (uint8_t i = 0; i < 2; i++) {
-        const uint8_t w = GFX_TextWidth(lines[i]);
-        GFX_Text(w < LCD_WIDTH ? (uint8_t)((LCD_WIDTH - w) / 2) : 0, (uint8_t)(4 + 2 * i), lines[i]);
-    }
+    CentreDouble(1, APP_NAME);                  // rows 1-14
+    GFX_Text((uint8_t)((LCD_WIDTH - GFX_TextWidth(VERSION_STRING)) / 2), 2, VERSION_STRING);   // rows 16-22
+    GFX_ShiftDown1(0);                          // all down a pixel: the name in rows 2-15
+    GFX_Lower(2);                               // the version two more: rows 19-25, clear of the bar
+    GFX_InvertPage(0, 0, LCD_WIDTH - 1);        // the bar: rows 0-16, a pixel of margin all round
+    GFX_InvertPage(1, 0, LCD_WIDTH - 1);
+    for (uint8_t x = 0; x < LCD_WIDTH; x++)
+        gFrameBuffer[2][x] |= 0x01;             // row 16
+    gFrameBuffer[0][0] &= (uint8_t)~0x01;       // rounded corners
+    gFrameBuffer[0][LCD_WIDTH - 1] &= (uint8_t)~0x01;
+    gFrameBuffer[2][0] &= (uint8_t)~0x01;
+    gFrameBuffer[2][LCD_WIDTH - 1] &= (uint8_t)~0x01;
+    CentreDouble(38, MyCall(call) ? call : "NO CALL"); // rows 38-51, centred in rows 26-63
     ST7565_Blit();
     SYSTICK_DelayUs(SPLASH_US);
 }
@@ -1004,6 +1180,9 @@ void APP_Tick10ms(void)
         WakeBacklight();
         sDirty = true;
     }
+    if (packet)
+        sRxLedTicks = RX_LED_TICKS;
+    UpdateLed();
     if (MSG_TakeChanged())
         sDirty = true;
     const bool new_message = MSG_TakeNew();

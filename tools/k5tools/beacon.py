@@ -1,5 +1,6 @@
-"""BeaconConfig (src/beacon.h): the 64-byte APRS beacon configuration stored
-in the radio's EEPROM at 0x0010."""
+"""BeaconConfig and BeaconStatus (src/beacon.h): the APRS beacon configuration
+stored in the radio's EEPROM at 0x0010 (64 bytes) and the beacon type and
+status text at 0x0C00 (72 bytes)."""
 
 from __future__ import annotations
 
@@ -84,6 +85,53 @@ class Beacon:
         return ("!" + self._coord(self.lat_hmin, 2, "N", "S") + self.symbol[0]
                 + self._coord(self.lon_hmin, 3, "E", "W") + self.symbol[1] + self.comment)
 
-    def tnc2(self) -> str:
+    @property
+    def has_position(self) -> bool:
+        return not (self.lat_hmin == 0 and self.lon_hmin == 0)
+
+    def header(self) -> str:
         path = PATHS[self.path_hops]
-        return f"{self.source}>APZK5M{',' + path if path else ''}:{self.info()}"
+        return f"{self.source}>APZK5M{',' + path if path else ''}"
+
+    def tnc2(self) -> str:
+        return f"{self.header()}:{self.info()}"
+
+
+STATUS_MAGIC = 0x3154354B   # "K5T1"
+STATUS_MAX = 62
+STATUS_FORMAT = "<IB3x64s"  # must match BeaconStatus
+assert struct.calcsize(STATUS_FORMAT) == 72
+TYPES = ["position", "status", "both"]
+
+
+@dataclass
+class Status:
+    type: str = "position"  # position (status if no position is set), status, both
+    text: str = ""          # "" = "K5-APRS <version>"
+
+    def validate(self) -> None:
+        if self.type not in TYPES:
+            raise ValueError("beacon type must be position, status or both")
+        if (len(self.text) > STATUS_MAX or not all(" " <= c <= "~" for c in self.text)
+                or "|" in self.text or "~" in self.text):
+            raise ValueError(f"status: at most {STATUS_MAX} printable ASCII characters, no | or ~")
+
+    def pack(self) -> bytes:
+        self.validate()
+        return struct.pack(STATUS_FORMAT, STATUS_MAGIC, TYPES.index(self.type),
+                           self.text.encode().ljust(64, b"\0"))
+
+    @classmethod
+    def unpack(cls, data: bytes) -> "Status":
+        magic, kind, text = struct.unpack(STATUS_FORMAT, data)
+        if magic != STATUS_MAGIC or kind >= len(TYPES):
+            return cls()             # never set: the firmware's defaults
+        return cls(TYPES[kind], text.split(b"\0")[0].decode())
+
+    def frames(self, b: Beacon, version: str = "K5-APRS") -> list[str]:
+        """What the radio sends for a beacon (hold F / auto-beacon), as TNC2 lines."""
+        pos = b.has_position and self.type != "status"
+        out = [b.tnc2()] if pos else []
+        if not pos or self.type == "both":
+            out.append(f"{b.header()}:>{self.text or version}")
+        return out

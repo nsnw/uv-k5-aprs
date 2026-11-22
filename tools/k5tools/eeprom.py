@@ -1,6 +1,6 @@
 """Read the UV-K5 EEPROM over the stock/F4HWN programming protocol (the one
 CHIRP uses). Read-only. The radio must be running stock-compatible firmware,
-not APRSK5.
+not K5-APRS.
 """
 
 from __future__ import annotations

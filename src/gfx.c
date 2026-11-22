@@ -13,14 +13,21 @@ void GFX_Clear(void)
 }
 
 // Keys: inverted 7 x 7 boxes with a 5 x 5 letter cut out, indexed by code - 1
-static const uint8_t KEY_ICONS[2][7] = {
+static const uint8_t KEY_ICONS[3][7] = {
     { 0x7F, 0x41, 0x7B, 0x77, 0x7B, 0x41, 0x7F },   // M
     { 0x7F, 0x41, 0x55, 0x55, 0x55, 0x5D, 0x7F },   // E
+    { 0x7F, 0x41, 0x75, 0x75, 0x75, 0x7D, 0x7F },   // F
 };
 static const uint8_t DOT_ICON[3] = { 0x1C, 0x1C, 0x1C };   // GFX_ICON_DOT: 3 x 3, centred
+static const uint8_t HOLD_ICON[7] = { 0x1C, 0x22, 0x41, 0x4D, 0x49, 0x22, 0x1C };   // GFX_ICON_HOLD: a clock
 
-static bool    IsKey(char c)     { return c >= 1 && c <= (char)(sizeof KEY_ICONS / sizeof KEY_ICONS[0]); }
-static uint8_t CharWidth(char c) { return IsKey(c) ? 8 : c == GFX_ICON_DOT[0] ? 4 : GFX_CHAR_W + 1; }
+static const uint8_t (*sFont)[GFX_CHAR_W] = gFontSmall;
+
+void GFX_SetBold(bool on) { sFont = on ? gFontSmallBold : gFontSmall; }
+
+static bool    IsKey(char c)     { return c == 1 || c == 2 || c == 4; }   // 3 is the dot
+static uint8_t KeyIndex(char c)  { return c == 4 ? 2 : (uint8_t)(c - 1); }
+static uint8_t CharWidth(char c) { return IsKey(c) || c == GFX_ICON_HOLD[0] ? 8 : c == GFX_ICON_DOT[0] ? 4 : GFX_CHAR_W + 1; }
 
 uint8_t GFX_Text(uint8_t x, uint8_t page, const char *s)
 {
@@ -33,14 +40,26 @@ uint8_t GFX_Text(uint8_t x, uint8_t page, const char *s)
         if (IsKey(c)) {
             if (x + sizeof KEY_ICONS[0] > LCD_WIDTH)
                 break;
-            memcpy(&gFrameBuffer[page][x], KEY_ICONS[c - 1], sizeof KEY_ICONS[0]);
+            memcpy(&gFrameBuffer[page][x], KEY_ICONS[KeyIndex(c)], sizeof KEY_ICONS[0]);
         } else if (c == GFX_ICON_DOT[0]) {
             memcpy(&gFrameBuffer[page][x], DOT_ICON, sizeof DOT_ICON);
+        } else if (c == GFX_ICON_HOLD[0]) {
+            if (x + sizeof HOLD_ICON > LCD_WIDTH)
+                break;
+            memcpy(&gFrameBuffer[page][x], HOLD_ICON, sizeof HOLD_ICON);
         } else if (c > ' ' && c <= '~') {
-            memcpy(&gFrameBuffer[page][x], gFontSmall[c - '!'], GFX_CHAR_W);
+            memcpy(&gFrameBuffer[page][x], sFont[c - '!'], GFX_CHAR_W);
         }
         x += CharWidth(c);
     }
+    return x;
+}
+
+uint8_t GFX_TextBold(uint8_t x, uint8_t page, const char *s)
+{
+    GFX_SetBold(true);
+    x = GFX_Text(x, page, s);
+    GFX_SetBold(false);
     return x;
 }
 
@@ -55,6 +74,13 @@ void GFX_TextRight(uint8_t right_x, uint8_t page, const char *s)
 {
     const uint8_t w = GFX_TextWidth(s);
     GFX_Text(w > right_x ? 0 : right_x - w, page, s);
+}
+
+void GFX_TextRightBold(uint8_t right_x, uint8_t page, const char *s)
+{
+    GFX_SetBold(true);
+    GFX_TextRight(right_x, page, s);
+    GFX_SetBold(false);
 }
 
 static uint8_t BigDigits(uint8_t x, uint8_t page, const char *s, uint8_t top_shift);
@@ -144,6 +170,33 @@ void GFX_ShiftDown1(uint8_t first_page)
             carry = b >> 7;
         }
     }
+}
+
+// Moves pixel rows y0..63 down n rows (the bottom ones drop off).
+static void ShiftRows(uint8_t y0, uint8_t n)
+{
+    const uint64_t above = ((uint64_t)1 << y0) - 1;
+    for (uint8_t x = 0; x < LCD_WIDTH; x++) {
+        uint64_t col = 0;
+        for (uint8_t p = 0; p < LCD_PAGES; p++)
+            col |= (uint64_t)gFrameBuffer[p][x] << (8 * p);
+        col = (col & above) | ((col & ~above) << n);
+        for (uint8_t p = 0; p < LCD_PAGES; p++)
+            gFrameBuffer[p][x] = (uint8_t)(col >> (8 * p));
+    }
+}
+
+void GFX_Divide(uint8_t page)
+{
+    const uint8_t y = (uint8_t)(page * 8);
+    ShiftRows((uint8_t)(y + 8), 2);     // the body down two: a gap above and below the rule
+    ShiftRows(y, 2);                    // all of it down two, clear of the status bar's divider
+    GFX_HLine(0, LCD_WIDTH - 1, (uint8_t)(y + 10));
+}
+
+void GFX_Lower(uint8_t page)
+{
+    ShiftRows((uint8_t)(page * 8), 2);
 }
 
 void GFX_InvertPage(uint8_t page, uint8_t x0, uint8_t x1)

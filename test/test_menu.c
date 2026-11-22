@@ -4,6 +4,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>
 
 #include "app.h"
 #include "beacon.h"
@@ -24,10 +25,14 @@ bool RADIO_IsTunable(uint32_t f) { return f >= 14400000 && f <= 14800000; }
 static const char *sMsg;
 void APP_ShowMessage(const char *m, bool now) { (void)now; sMsg = m; }
 uint8_t GFX_Text(uint8_t x, uint8_t p, const char *s) { (void)p; return (uint8_t)(x + strlen(s) * 7); }
+uint8_t GFX_TextBold(uint8_t x, uint8_t p, const char *s) { return GFX_Text(x, p, s); }
+void GFX_TextRightBold(uint8_t x, uint8_t p, const char *s) { (void)x; (void)p; (void)s; }
 uint8_t GFX_TextWidth(const char *s) { return (uint8_t)(strlen(s) * 7); }
 void GFX_TextRight(uint8_t x, uint8_t p, const char *s) { (void)x; (void)p; (void)s; }
 void GFX_InvertPage(uint8_t p, uint8_t a, uint8_t b) { (void)p; (void)a; (void)b; }
 void GFX_ShiftDown1(uint8_t p) { (void)p; }
+void GFX_Divide(uint8_t p) { (void)p; }
+uint32_t APRS_NowSeconds(void) { return 0; }
 
 static BeaconConfig sB = { .magic = BEACON_MAGIC, .call = "VE6HUE", .ssid = 1, .path_hops = 2,
                            .symbol_table = '/', .symbol = '[', .lat = 51 * 6000 + 234, .lon = -(114 * 6000 + 486),
@@ -42,6 +47,9 @@ bool BEACON_Set(const BeaconConfig *c)
     sB = *c; sConfigured = true; return true;
 }
 void BEACON_RestartTimer(void) {}
+static BeaconStatus sBs = { .magic = BEACON_STATUS_MAGIC };
+const BeaconStatus *BEACON_GetStatus(void) { return &sBs; }
+bool BEACON_SetStatus(const BeaconStatus *b) { if (b->type >= BEACON_TYPE_COUNT) return false; sBs = *b; return true; }
 static StationConfig sS = { .magic = STATION_MAGIC, .txdelay_flags = 40, .txtail_flags = 3, .digi_max_hops = 2, .beacon_interval_min = 30 };
 const StationConfig *STATION_Get(void) { return &sS; }
 bool STATION_Set(const StationConfig *c) { sS = *c; return true; }
@@ -89,6 +97,22 @@ int main(void)
     MEM_Load();
     CHECK(MEM_Get(2) == NULL, "cleared slot stays clear after reload");
 
+    // ------------------------------------------------ blank radio: first callsign from the menu
+    {
+        const BeaconConfig saved = sB;
+        memset(&sB, 0, sizeof sB);
+        sConfigured = false;
+        Top(); Down(1);                        // Callsign
+        Key(KEY_MENU);
+        Taps(KEY_8, 3); Wait(); Taps(KEY_3, 2); Wait(); Taps(KEY_6, 4); Wait();   // V E 6
+        Taps(KEY_2, 3); Wait(); Taps(KEY_9, 2); Wait(); Taps(KEY_9, 4); Wait();   // C X Z
+        Key(KEY_MENU);
+        CHECK(sConfigured && !memcmp(sB.call, "VE6CXZ", 6), "first callsign saved ('%.6s', msg %s)", sB.call, sMsg ? sMsg : "-");
+        Down(1); Key(KEY_MENU); Key(KEY_UP); Key(KEY_MENU);   // SSID 0 -> 1
+        CHECK(sB.ssid == 1, "then the SSID can be set (%d, msg %s)", sB.ssid, sMsg ? sMsg : "-");
+        sB = saved;
+    }
+
     // ------------------------------------------------ callsign: VE6CXZ by multi-tap
     Top(); Down(1);
     Key(KEY_MENU);                         // edit Callsign
@@ -123,6 +147,16 @@ int main(void)
     HoldExit();
     CHECK(sB.lon == -(113 * 6000 + 2940), "lon unchanged after cancel");
 
+    // ------------------------------------------------ symbol: from the list, DOWN = next
+    Down(1);
+    Key(KEY_MENU); Key(KEY_DOWN); Key(KEY_MENU);
+    CHECK(sB.symbol_table == '/' && sB.symbol == '>', "person -> car (got %c%c)", sB.symbol_table, sB.symbol);
+    Key(KEY_MENU); Key(KEY_UP); Key(KEY_UP); Key(KEY_MENU);
+    CHECK(sB.symbol == 'a', "UP past the top wraps to the end (got %c)", sB.symbol);
+    sB.symbol_table = '\\'; sB.symbol = 'n';   // set from the host, not in the list
+    Key(KEY_MENU); Key(KEY_DOWN); Key(KEY_MENU);
+    CHECK(sB.symbol_table == '/' && sB.symbol == '[', "unknown symbol -> first in the list (got %c%c)", sB.symbol_table, sB.symbol);
+
     // ------------------------------------------------ comment: append " K5", backspace, lower case
     Down(1);
     Key(KEY_MENU);                         // cursor at the end of "hello"
@@ -154,6 +188,21 @@ int main(void)
     Down(1);
     Key(KEY_MENU); Key(KEY_DOWN); Key(KEY_MENU);
     CHECK(sB.path_hops == 1, "path 2 -> 1 (got %u)", sB.path_hops);
+
+    // ------------------------------------------------ beacon type and status text
+    Down(1);
+    Key(KEY_MENU); Key(KEY_UP); Key(KEY_MENU);
+    CHECK(sBs.type == BEACON_TYPE_STATUS, "POS -> STATUS (got %u)", sBs.type);
+    Down(1);
+    Key(KEY_MENU);
+    Taps(KEY_3, 1); Wait(); Taps(KEY_4, 3); Wait(); Taps(KEY_4, 1); Wait(); Taps(KEY_4, 3); Wait();   // DIGI
+    Key(KEY_0); Wait(); Key(KEY_0); Wait();   // trailing spaces are dropped
+    Key(KEY_MENU);
+    CHECK(strcasecmp(sBs.text, "digi") == 0, "status text '%s'", sBs.text);
+    sConfigured = false;
+    Key(KEY_MENU);
+    CHECK(sMsg && !strcmp(sMsg, "SET CALLSIGN FIRST"), "status needs a callsign");
+    sConfigured = true;
 
     MENU_Render();
     printf("%d passed, %d failed\n", sPass, sFail);
