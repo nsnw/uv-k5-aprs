@@ -17,6 +17,20 @@ them is new, and was mostly written by Claude (see [Yes, an AI wrote this](#yes-
 > - Tested on one UV-K5 (DP32G030, BK4819, bootloader 2.00.06). Other variants
 >   haven't been tried.
 
+## Screenshots
+
+Rendered from the firmware's own drawing code (`test/screens.sh`), so they
+match the radio's 128×64 LCD pixel for pixel.
+
+| | |
+|:---:|:---:|
+| ![Boot screen](docs/screenshots/01-splash.png)<br>Boot screen | ![Stations, newest first](docs/screenshots/02-stations.png)<br>Stations, newest first |
+| ![Stations, nearest first](docs/screenshots/04-stations-nearest.png)<br>Stations, nearest first | ![Station details](docs/screenshots/06-detail-position.png)<br>Station details |
+| ![Messages](docs/screenshots/10-messages.png)<br>Messages | ![Reading a message](docs/screenshots/11-message.png)<br>Reading a message |
+| ![Writing a reply](docs/screenshots/11c-reply.png)<br>Writing a reply | ![A new message arriving](docs/screenshots/09-new-message.png)<br>A new message arriving |
+| ![Radio](docs/screenshots/12-radio.png)<br>Radio | ![The last packet heard](docs/screenshots/15-packet.png)<br>The last packet heard |
+| ![Settings](docs/screenshots/18-menu.png)<br>Settings | ![About](docs/screenshots/21b-about.png)<br>About |
+
 ## Features
 
 - **Receive APRS** (1200 baud AFSK) on any frequency in the bands above. The
@@ -192,7 +206,10 @@ text yet goes back to the callsign. A reply starts in the text.
 ## Getting started
 
 1. Back up the EEPROM while the stock firmware is still running (see [Tools](#tools)).
-2. Build and flash K5-APRS.
+2. Flash K5-APRS: download it from
+   [Releases](https://github.com/nsnw/uv-k5-aprs/releases) (`.packed.bin` for
+   web flashers and `k5prog`, `.bin` for `k5 flash`; a receive-only build is
+   there too), or build it yourself (below).
 3. Hold `MENU` and set your callsign and SSID; optionally your position,
    symbol and status text.
 4. Tune your local APRS frequency. Hold `F` to beacon; turn on **Auto beacon**
