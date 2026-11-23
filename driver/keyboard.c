@@ -88,9 +88,21 @@ static const struct {
     }
 };
 
+static uint16_t sBusRecoveries;
+
+uint16_t KEYBOARD_BusRecoveries(void) { return sBusRecoveries; }
+
 KEY_Code_t KEYBOARD_Poll(void)
 {
     KEY_Code_t Key = KEY_INVALID;
+
+    // A stuck EEPROM holding SDA (row 2) low makes UP read as SIDE1: free
+    // the bus and skip this scan (driver/i2c.h, issue BUG-001).
+    if (I2C_IsSdaHeld()) {
+        I2C_Recover();
+        sBusRecoveries++;
+        return KEY_INVALID;
+    }
 
     for (unsigned int j = 0; j < ARRAY_SIZE(keyboard); j++)
     {

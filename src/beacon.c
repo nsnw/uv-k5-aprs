@@ -21,6 +21,10 @@
 static BeaconConfig sCfg;
 static bool         sValid;
 static BeaconStatus sStatus;
+static uint32_t     sNext_s;        // auto-beacon: when the next one is due; 0 = schedule from the next poll
+#ifdef ENABLE_TX
+static uint16_t     sStep_min;      // fast start: the next gap (doubles); 0 = at the interval
+#endif
 
 // ------------------------------------------------------------ validation
 
@@ -93,6 +97,8 @@ bool BEACON_SetStatus(const BeaconStatus *s)
 {
     if (!ValidStatus(s))
         return false;
+    if (memcmp(&sStatus, s, sizeof sStatus) != 0)
+        sNext_s = 0;                   // changed: beacon it soon (and fast-start again)
     sStatus = *s;
     const uint8_t *p = (const uint8_t *)&sStatus;
     for (unsigned i = 0; i < sizeof sStatus; i += 8)
@@ -107,6 +113,8 @@ bool BEACON_Set(const BeaconConfig *cfg)
 {
     if (!Valid(cfg))
         return false;
+    if (!sValid || memcmp(&sCfg, cfg, sizeof sCfg) != 0)
+        sNext_s = 0;                   // changed: beacon it soon (and fast-start again)
     sCfg = *cfg;
     const uint8_t *p = (const uint8_t *)&sCfg;
     for (unsigned i = 0; i < sizeof sCfg; i += 8)
@@ -171,16 +179,48 @@ uint16_t BEACON_BuildStatusFrame(uint8_t *out, uint16_t size)
     return (uint16_t)((uint8_t *)t - out);
 }
 
-uint16_t BEACON_BuildFrame(uint8_t *out, uint16_t size)
+// Four base-91 digits (APRS101 ch. 9).
+static char *PutBase91(char *p, uint32_t v)
+{
+    for (int i = 3; i >= 0; i--) {
+        p[i] = (char)('!' + v % 91);
+        v /= 91;
+    }
+    return p + 4;
+}
+
+// "/5L!!<*e7> sT": table, YYYY, XXXX, symbol, then " sT" (no course, speed
+// or altitude: with c = ' ' the s and T bytes are ignored). An overlay digit
+// is sent as a-j.
+static char *PutCompressed(char *t)
+{
+    const char table = sCfg.symbol_table;
+    *t++ = (table >= '0' && table <= '9') ? (char)('a' + table - '0') : table;
+    // y = 380926 (90 - lat), x = 190463 (180 + lon), lat/lon in degrees,
+    // truncated as in APRS101's example (49 30N 72 45W -> "5L!!<*e7")
+    t = PutBase91(t, (uint32_t)((int64_t)380926 * (90 * 6000 - sCfg.lat) / 6000));
+    t = PutBase91(t, (uint32_t)((int64_t)190463 * (180 * 6000 + sCfg.lon) / 6000));
+    *t++ = sCfg.symbol;
+    *t++ = ' ';
+    *t++ = 's';
+    *t++ = 'T';
+    return t;
+}
+
+uint16_t BEACON_BuildFrame(uint8_t *out, uint16_t size, bool compressed)
 {
     if (!BEACON_HasPosition() || size < 16 + 7 * 2 + 20 + BEACON_COMMENT_MAX)
         return 0;
     char *t = (char *)Header(out);
     *t++ = '!';                                   // position, no messaging
-    t = PutCoord(t, sCfg.lat, 2, 'N', 'S');
-    *t++ = sCfg.symbol_table;
-    t = PutCoord(t, sCfg.lon, 3, 'E', 'W');
-    *t++ = sCfg.symbol;
+    if (compressed) {
+        t = PutCompressed(t);
+    } else {
+        t = PutCoord(t, sCfg.lat, 2, 'N', 'S');
+        *t++ = sCfg.symbol_table;
+        t = PutCoord(t, sCfg.lon, 3, 'E', 'W');
+        *t++ = sCfg.symbol;
+    }
     for (int i = 0; i < BEACON_COMMENT_MAX && sCfg.comment[i]; i++)
         *t++ = sCfg.comment[i];
     return (uint16_t)((uint8_t *)t - out);
@@ -197,7 +237,8 @@ static BeaconResult Queue(bool position, bool status)
         return BEACON_TX_REFUSED;
     static uint8_t frame[TX_MAX_FRAME];
     if (position) {
-        const uint16_t len = BEACON_BuildFrame(frame, sizeof frame);
+        const uint16_t len = BEACON_BuildFrame(frame, sizeof frame,
+                                               STATION_Get()->flags & STATION_COMPRESSED);
         if (!TXQ_PushLocal(frame, len))
             return BEACON_QUEUE_FULL;
     }
@@ -241,8 +282,6 @@ BeaconResult BEACON_SendStatus(void)
 #endif
 }
 
-static uint32_t sNext_s;        // 0 = schedule from the next poll
-
 void BEACON_RestartTimer(void) { sNext_s = 0; }
 
 uint32_t BEACON_SecondsToNext(uint32_t now_s) { return sNext_s > now_s ? sNext_s - now_s : 0; }
@@ -255,11 +294,20 @@ void BEACON_Poll1s(uint32_t now_s)
         sNext_s = 0;
         return;
     }
-    if (sNext_s == 0)
-        sNext_s = now_s + BEACON_FIRST_S;
+    if (sNext_s == 0) {
+        sNext_s   = now_s + BEACON_FIRST_S;
+        sStep_min = (st->flags & STATION_NO_FAST_START) ? 0 : 1;
+    }
     if (now_s >= sNext_s) {
         BEACON_Send();          // not a TX frequency / queue full: skip this one
-        sNext_s = now_s + (uint32_t)st->beacon_interval_min * 60u;
+        uint16_t gap = st->beacon_interval_min;
+        if (sStep_min && sStep_min < gap) {
+            gap = sStep_min;
+            sStep_min *= 2;
+        } else {
+            sStep_min = 0;
+        }
+        sNext_s = now_s + (uint32_t)gap * 60u;
     }
 #else
     (void)now_s;

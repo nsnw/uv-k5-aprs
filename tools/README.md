@@ -28,7 +28,7 @@ subcommand) or set `K5_PORT`. `k5 ports` shows what's connected.
 | `k5 aprs [--log FILE]` | K5-APRS | print decoded packets live |
 | `k5 beacon show` / `k5 beacon set --call CALL-SSID [--lat .. --lon ..] [--type status --status TEXT] ...` | K5-APRS | beacon: callsign, symbol, position, path, comment, type (position / status / both), status text; shows what a beacon sends |
 | `k5 send --from CALL ...` | K5-APRS | transmit test frames (needs a licence) |
-| `k5 config show` / `k5 config set --digi on --digi-hops 2 ...` | K5-APRS | TX delay/tail, digipeater, auto-beacon, message / TX / RX beeps (stored on the radio) |
+| `k5 config show` / `k5 config set --digi on --digi-hops 2 ...` | K5-APRS | TX delay/tail, digipeater, auto-beacon (with fast start), compressed positions, message / TX / RX beeps (stored on the radio) |
 | `k5 kiss on/off [--freq]` | K5-APRS | switch the cable between the text console and KISS (or hold * on the radio) |
 | `k5 kiss monitor` | KISS mode | print frames the radio passes to the host |
 | `k5 kiss send --from CALL ...` | KISS mode | transmit one frame through the TNC (CSMA) |

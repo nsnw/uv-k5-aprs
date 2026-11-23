@@ -331,7 +331,7 @@ def _read_status(k: K5Console):
     return Status.unpack(bytes.fromhex(k.command("u", "U").split()[1]))
 
 
-def _show_beacon(b, st, version: str = "K5-APRS") -> None:
+def _show_beacon(b, st, version: str = "K5-APRS", compressed: bool = False) -> None:
     click.echo(f"call     {b.source}")
     click.echo(f"position {f'{b.lat:.5f}, {b.lon:.5f}' if b.has_position else '(not set)'}")
     click.echo(f"symbol   {b.symbol}")
@@ -340,7 +340,7 @@ def _show_beacon(b, st, version: str = "K5-APRS") -> None:
     click.echo(f"type     {st.type}" + ("" if b.has_position or st.type == "status"
                                         else " (no position: sends the status report)"))
     click.echo(f"status   {st.text!r}" + ("" if st.text else f" (sends {version!r})"))
-    for f in st.frames(b, version):
+    for f in st.frames(b, version, compressed):
         click.echo(f"sends    {f}")
 
 
@@ -361,10 +361,11 @@ def beacon_show(ctx: click.Context) -> None:
         b = _read_beacon(k)
         st = _read_status(k)
         version = " ".join(k.version().split()[:2])
+        compressed = _read_station(k).compressed
     if b is None:
         click.echo("no beacon configured (use `k5 beacon set --call ...`)")
     else:
-        _show_beacon(b, st, version)
+        _show_beacon(b, st, version, compressed)
 
 
 @beacon.command("set")
@@ -422,12 +423,13 @@ def beacon_set(ctx: click.Context, call: str | None, lat: float | None, lon: flo
             k.command("u " + sblob.hex().upper(), "U")
             stored, sstored = _read_beacon(k), _read_status(k)
             version = " ".join(k.version().split()[:2])
+            compressed = _read_station(k).compressed
         except RuntimeError as e:
             raise click.ClickException(str(e))
     if stored != b or sstored != st:
         raise click.ClickException("read-back differs from what was written")
     click.echo("stored (verified by read-back):")
-    _show_beacon(stored, sstored, version)
+    _show_beacon(stored, sstored, version, compressed)
 
 
 @cli.command()
@@ -528,7 +530,9 @@ def _show_station(st) -> None:
     click.echo(f"TX tail      {st.txtail_flags} flags ({st.txtail_flags * FLAG_MS:.0f} ms)")
     hops = "fill-in, WIDE1-1 only" if st.digi_max_hops == 1 else f"WIDEn-N up to n = {st.digi_max_hops}"
     click.echo(f"digipeater   {'on' if st.digi else 'off'} ({hops})")
-    click.echo(f"auto-beacon  {'on' if st.autobeacon else 'off'} (every {st.beacon_interval_min} min)")
+    click.echo(f"auto-beacon  {'on' if st.autobeacon else 'off'} (every {st.beacon_interval_min} min"
+               + (", fast start)" if st.fast_start else ")"))
+    click.echo(f"compressed   {'on' if st.compressed else 'off'}")
     click.echo(f"message beep {'on' if st.msg_beep else 'off'}")
     click.echo(f"TX beep      {'on' if st.tx_beep else 'off'}")
     click.echo(f"RX beep      {st.rx_beep}")
@@ -540,8 +544,8 @@ def config() -> None:
 
     \b
     The digipeater and auto-beacon use the callsign from `k5 beacon set`.
-    On the radio: SIDE1 toggles the digipeater, SIDE2 the auto-beacon;
-    the status line shows D / B (inverted = on and on a TX frequency).
+    On the radio they are in the settings menu (hold MENU); the status bar
+    shows an icon for each while it's on (blinking: not a TX frequency).
     """
 
 
@@ -572,10 +576,14 @@ _ON_OFF = click.Choice(["on", "off"])
 @click.option("--tx-beep", type=_ON_OFF, help="Beep after our own transmissions (not digipeats or KISS).")
 @click.option("--rx-beep", type=click.Choice(["off", "new", "all"]),
               help="Beep for received packets: new stations only, or every new packet.")
+@click.option("--compressed", type=_ON_OFF, help="Compressed position reports (6 bytes shorter).")
+@click.option("--fast-start", type=_ON_OFF,
+              help="Auto-beacon after 1, 2, 4 ... minutes up to the interval, after power-on or a change.")
 @click.pass_context
 def config_set(ctx: click.Context, txdelay: float | None, txtail: float | None, digi: str | None,
                digi_hops: int | None, auto_beacon: str | None, beacon_interval: int | None,
-               msg_beep: str | None, tx_beep: str | None, rx_beep: str | None) -> None:
+               msg_beep: str | None, tx_beep: str | None, rx_beep: str | None,
+               compressed: str | None, fast_start: str | None) -> None:
     """Change station options; anything not given stays as it is."""
     from .station import Station
     with _console(ctx) as k:
@@ -599,6 +607,10 @@ def config_set(ctx: click.Context, txdelay: float | None, txtail: float | None, 
                 st.tx_beep = tx_beep == "on"
             if rx_beep is not None:
                 st.rx_beep = rx_beep
+            if compressed is not None:
+                st.compressed = compressed == "on"
+            if fast_start is not None:
+                st.fast_start = fast_start == "on"
             data = st.pack()
             reply = bytes.fromhex(k.command("o " + data.hex().upper(), "O").split()[1])
             if reply != data:   # a stale reply (e.g. delayed by a transmission): read again

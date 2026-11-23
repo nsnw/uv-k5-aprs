@@ -284,13 +284,14 @@ static void Execute(const char *line)
         KISS_Enter();
         return;
 
-    case 'y': {     // keypad diagnostics: "Y DIR DATA0 DATA1 DATA2 DATA3 DATA4 KEY"
+    case 'y': {     // keypad diagnostics: "Y DIR DATA0 DATA1 DATA2 DATA3 DATA4 KEY RECOVERIES"
         uint16_t raw[5];
         const uint32_t dir = GPIOA->DIR;
         KEYBOARD_ReadRaw(raw);
         UART_Print("Y "); PutHex(dir, 4);
         for (int i = 0; i < 5; i++) { UART_Print(" "); PutHex(raw[i], 4); }
-        UART_Print(" "); PutHex((uint32_t)KEYBOARD_Poll(), 2); Newline();
+        UART_Print(" "); PutHex((uint32_t)KEYBOARD_Poll(), 2);
+        UART_Print(" "); PutDec(KEYBOARD_BusRecoveries()); Newline();
         return;
     }
 

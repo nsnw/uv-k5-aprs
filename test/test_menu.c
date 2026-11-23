@@ -63,7 +63,7 @@ static void HoldExit(void) { MENU_HandleKey((KeyEvent_t){ KEV_PRESS, KEY_EXIT })
 static void Wait(void) { for (int i = 0; i < 120; i++) MENU_Tick10ms(); }
 static void Taps(KEY_Code_t k, int n) { while (n--) Key(k); }
 static void Down(int n) { while (n--) Key(KEY_DOWN); }
-static void Top(void) { for (int i = 0; i < 20; i++) Key(KEY_UP); }
+static void Top(void) { for (int i = 0; i < 30; i++) Key(KEY_UP); }
 static void HoldMenu(void) { MENU_HandleKey((KeyEvent_t){ KEV_PRESS, KEY_MENU }); MENU_HandleKey((KeyEvent_t){ KEV_LONG, KEY_MENU }); MENU_HandleKey((KeyEvent_t){ KEV_RELEASE, KEY_MENU }); }
 static void HoldExitList(void) { MENU_HandleKey((KeyEvent_t){ KEV_PRESS, KEY_EXIT }); MENU_HandleKey((KeyEvent_t){ KEV_LONG, KEY_EXIT }); MENU_HandleKey((KeyEvent_t){ KEV_RELEASE, KEY_EXIT }); }
 
@@ -189,6 +189,13 @@ int main(void)
     Key(KEY_MENU); Key(KEY_DOWN); Key(KEY_MENU);
     CHECK(sB.path_hops == 1, "path 2 -> 1 (got %u)", sB.path_hops);
 
+    // ------------------------------------------------ compressed: an on/off flag, no callsign needed
+    Down(1);
+    Key(KEY_MENU);
+    CHECK(sS.flags & STATION_COMPRESSED, "compressed on");
+    Key(KEY_MENU);
+    CHECK(!(sS.flags & STATION_COMPRESSED), "compressed off");
+
     // ------------------------------------------------ beacon type and status text
     Down(1);
     Key(KEY_MENU); Key(KEY_UP); Key(KEY_MENU);
@@ -203,6 +210,12 @@ int main(void)
     Key(KEY_MENU);
     CHECK(sMsg && !strcmp(sMsg, "SET CALLSIGN FIRST"), "status needs a callsign");
     sConfigured = true;
+
+    // ------------------------------------------------ fast start: on by default (stored inverted)
+    Down(3);                               // Auto beacon, Beacon every, Fast start
+    CHECK(!(sS.flags & STATION_NO_FAST_START), "fast start on by default");
+    Key(KEY_MENU);
+    CHECK(sS.flags & STATION_NO_FAST_START, "fast start off");
 
     MENU_Render();
     printf("%d passed, %d failed\n", sPass, sFail);

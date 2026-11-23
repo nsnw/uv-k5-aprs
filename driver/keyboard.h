@@ -50,6 +50,8 @@ KEY_Code_t KEYBOARD_Poll(void);
 // Diagnostics (console 'y'): the GPIOA input register for each scan row
 // (row 0 = nothing pulled down, then rows 1-4), sampled as KEYBOARD_Poll does.
 void KEYBOARD_ReadRaw(uint16_t out[5]);
+// How many scans found SDA held low and freed the I2C bus (driver/i2c.h).
+uint16_t KEYBOARD_BusRecoveries(void);
 
 #endif
 

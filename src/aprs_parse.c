@@ -134,7 +134,7 @@ static bool ParseCompressed(const uint8_t *p, const uint8_t *end, AprsInfo *o)
     // lat = 90 - y/380926 deg, lon = -180 + x/190463 deg
     o->lat = 90 * 6000 - (int32_t)(((int64_t)y * 6000 + 190463) / 380926);
     o->lon = -180 * 6000 + (int32_t)(((int64_t)x * 6000 + 95231) / 190463);
-    o->symbol_table = (char)p[0];
+    o->symbol_table = (p[0] >= 'a' && p[0] <= 'j') ? (char)('0' + p[0] - 'a') : (char)p[0];   // overlay digit
     o->symbol       = (char)p[9];
 
     const uint8_t c = p[10], s = p[11], t = p[12];

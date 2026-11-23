@@ -67,9 +67,9 @@ void TXQ_Poll10ms(void) {}
 uint8_t TXQ_Count(void) { return 0; }
 bool TXQ_TakeLocalSent(void) { return false; }
 bool TX_IsAllowedFrequency(uint32_t f) { return f >= 14400000 && f <= 14800000; }
-void BEEP_Message(void) {}
-void BEEP_Sent(void) {}
-void BEEP_Received(void) {}
+void BEEP_Request(BeepKind k) { (void)k; }
+bool BEEP_Poll10ms(bool q) { (void)q; return false; }
+bool BEEP_IsPlaying(void) { return false; }
 void STORE_Poll1s(uint32_t s) { (void)s; }
 void STORE_Poll10ms(bool b) { (void)b; }
 void BEACON_Poll1s(uint32_t s) { (void)s; }

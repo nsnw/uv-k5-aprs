@@ -15,6 +15,8 @@
 #define STATION_AUTOBEACON   (1u << 1)     // beacon every beacon_interval_min
 #define STATION_MSG_QUIET    (1u << 2)     // no beep for new messages (beep.h)
 #define STATION_TX_QUIET     (1u << 3)     // no beep after our own transmissions (txq.h)
+#define STATION_COMPRESSED   (1u << 4)     // compressed position reports (beacon.h)
+#define STATION_NO_FAST_START (1u << 5)    // auto-beacon at the interval from the start (beacon.h)
 
 #define STATION_RX_BEEP_OFF  0
 #define STATION_RX_BEEP_NEW  1             // a station not heard yet (this session)

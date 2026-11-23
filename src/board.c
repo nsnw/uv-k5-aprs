@@ -27,6 +27,7 @@
 #include "bsp/dp32g030/syscon.h"
 #include "driver/adc.h"
 #include "driver/gpio.h"
+#include "driver/i2c.h"
 #include "driver/st7565.h"
 
 static void PortconInit(void)
@@ -194,6 +195,7 @@ void BOARD_Init(void)
 
     PortconInit();
     GpioInit();
+    I2C_Recover();      // in case the EEPROM was left mid-transfer by a reset
     BacklightInit();
     AdcInit();
     ST7565_Init();

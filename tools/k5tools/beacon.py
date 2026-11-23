@@ -80,8 +80,25 @@ class Beacon:
         v = abs(v)
         return f"{v // 6000:0{digits}d}{(v % 6000) // 100:02d}.{v % 100:02d}{hemi}"
 
-    def info(self) -> str:
-        """The APRS information field the firmware sends."""
+    @staticmethod
+    def _base91(v: int) -> str:
+        out = ""
+        for _ in range(4):
+            out = chr(33 + v % 91) + out
+            v //= 91
+        return out
+
+    def info(self, compressed: bool = False) -> str:
+        """The APRS information field the firmware sends (station option
+        `compressed`: APRS101 ch. 9, no course/speed, an overlay digit as a-j)."""
+        if compressed:
+            table = self.symbol[0]
+            if table.isdigit():
+                table = chr(ord("a") + int(table))
+            # truncated, as the firmware (src/beacon.c PutCompressed) and APRS101
+            y = 380926 * (90 * 6000 - self.lat_hmin) // 6000
+            x = 190463 * (180 * 6000 + self.lon_hmin) // 6000
+            return "!" + table + self._base91(y) + self._base91(x) + self.symbol[1] + " sT" + self.comment
         return ("!" + self._coord(self.lat_hmin, 2, "N", "S") + self.symbol[0]
                 + self._coord(self.lon_hmin, 3, "E", "W") + self.symbol[1] + self.comment)
 
@@ -93,8 +110,8 @@ class Beacon:
         path = PATHS[self.path_hops]
         return f"{self.source}>APZK5M{',' + path if path else ''}"
 
-    def tnc2(self) -> str:
-        return f"{self.header()}:{self.info()}"
+    def tnc2(self, compressed: bool = False) -> str:
+        return f"{self.header()}:{self.info(compressed)}"
 
 
 STATUS_MAGIC = 0x3154354B   # "K5T1"
@@ -128,10 +145,10 @@ class Status:
             return cls()             # never set: the firmware's defaults
         return cls(TYPES[kind], text.split(b"\0")[0].decode())
 
-    def frames(self, b: Beacon, version: str = "K5-APRS") -> list[str]:
+    def frames(self, b: Beacon, version: str = "K5-APRS", compressed: bool = False) -> list[str]:
         """What the radio sends for a beacon (hold F / auto-beacon), as TNC2 lines."""
         pos = b.has_position and self.type != "status"
-        out = [b.tnc2()] if pos else []
+        out = [b.tnc2(compressed)] if pos else []
         if not pos or self.type == "both":
             out.append(f"{b.header()}:>{self.text or version}")
         return out

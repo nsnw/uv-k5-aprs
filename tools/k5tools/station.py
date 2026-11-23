@@ -9,6 +9,7 @@ MAGIC = 0x3153354B          # "K5S1"
 FORMAT = "<IBBBBHB5x"
 assert struct.calcsize(FORMAT) == 16
 DIGI, AUTOBEACON, MSG_QUIET, TX_QUIET = 0x01, 0x02, 0x04, 0x08
+COMPRESSED, NO_FAST_START = 0x10, 0x20
 RX_BEEP = ["off", "new", "all"]
 FLAG_MS = 8 / 1.2           # one 0x7E flag at 1200 baud
 
@@ -24,6 +25,8 @@ class Station:
     msg_beep: bool = True           # beep for new messages (stored inverted: MSG_QUIET)
     tx_beep: bool = True            # beep after our own transmissions (stored inverted: TX_QUIET)
     rx_beep: str = "off"            # beep for received packets: off, new (stations), all
+    compressed: bool = False        # compressed position reports
+    fast_start: bool = True         # auto-beacon gaps 1, 2, 4 ... min up to the interval (stored inverted)
 
     def validate(self) -> None:
         if not 1 <= self.txdelay_flags <= 200:
@@ -40,7 +43,8 @@ class Station:
     def pack(self) -> bytes:
         self.validate()
         flags = ((DIGI if self.digi else 0) | (AUTOBEACON if self.autobeacon else 0)
-                 | (0 if self.msg_beep else MSG_QUIET) | (0 if self.tx_beep else TX_QUIET))
+                 | (0 if self.msg_beep else MSG_QUIET) | (0 if self.tx_beep else TX_QUIET)
+                 | (COMPRESSED if self.compressed else 0) | (0 if self.fast_start else NO_FAST_START))
         return struct.pack(FORMAT, MAGIC, self.txdelay_flags, self.txtail_flags, flags,
                            self.digi_max_hops, self.beacon_interval_min, RX_BEEP.index(self.rx_beep))
 
@@ -50,7 +54,8 @@ class Station:
         if magic != MAGIC:
             raise ValueError("not a station configuration")
         return cls(delay, tail, bool(flags & DIGI), bool(flags & AUTOBEACON), hops, interval,
-                   not flags & MSG_QUIET, not flags & TX_QUIET, RX_BEEP[rx] if rx < len(RX_BEEP) else "off")
+                   not flags & MSG_QUIET, not flags & TX_QUIET, RX_BEEP[rx] if rx < len(RX_BEEP) else "off",
+                   bool(flags & COMPRESSED), not flags & NO_FAST_START)
 
     @staticmethod
     def ms_to_flags(ms: float) -> int:

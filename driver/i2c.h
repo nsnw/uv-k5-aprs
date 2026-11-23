@@ -34,5 +34,13 @@ int I2C_Write(uint8_t Data);
 int I2C_ReadBuffer(void *pBuffer, uint8_t Size);
 int I2C_WriteBuffer(const void *pBuffer, uint8_t Size);
 
+// SDA is also keypad row 2 (UP's row). If the EEPROM is left mid-transfer
+// (e.g. the MCU reset during a read) it can hold SDA low, and UP then reads
+// as SIDE1. I2C_IsSdaHeld() releases SDA and reports whether something else
+// still holds it low; I2C_Recover() clocks SCL until it lets go (at most 9
+// clocks), then sends STOP.
+bool I2C_IsSdaHeld(void);
+void I2C_Recover(void);
+
 #endif
 

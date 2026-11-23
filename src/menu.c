@@ -26,10 +26,12 @@ enum {
     ITEM_SYMBOL,
     ITEM_COMMENT,
     ITEM_PATH,
+    ITEM_COMPRESSED,
     ITEM_BEACON_TYPE,
     ITEM_STATUS,
     ITEM_AUTOBEACON,
     ITEM_INTERVAL,
+    ITEM_FAST_START,
     ITEM_DIGI,
     ITEM_DIGI_HOPS,
     ITEM_MSG_BEEP,
@@ -43,9 +45,9 @@ enum {
 
 // Labels are short: a row is 18 characters (7 px each).
 static const char *const LABELS[ITEM_COUNT] = {
-    "Memories", "Callsign", "SSID", "Lat", "Lon", "Symbol", "Comment", "Path", "Beacon type",
-    "Status", "Auto beacon",
-    "Beacon every", "Digipeater", "Digi hops", "Msg beep", "TX beep", "RX beep", "TX delay", "TX tail",
+    "Memories", "Callsign", "SSID", "Lat", "Lon", "Symbol", "Comment", "Path", "Compressed",
+    "Beacon type", "Status", "Auto beacon",
+    "Beacon every", "Fast start", "Digipeater", "Digi hops", "Msg beep", "TX beep", "RX beep", "TX delay", "TX tail",
     "About",
 };
 
@@ -228,6 +230,8 @@ static void FormatValue(uint8_t item, const StationConfig *st, const BeaconConfi
     case ITEM_AUTOBEACON: strcpy(out, (st->flags & STATION_AUTOBEACON) ? "ON" : "OFF"); break;
     case ITEM_MSG_BEEP:   strcpy(out, (st->flags & STATION_MSG_QUIET) ? "OFF" : "ON"); break;
     case ITEM_TX_BEEP:    strcpy(out, (st->flags & STATION_TX_QUIET) ? "OFF" : "ON"); break;
+    case ITEM_COMPRESSED: strcpy(out, (st->flags & STATION_COMPRESSED) ? "ON" : "OFF"); break;
+    case ITEM_FAST_START: strcpy(out, (st->flags & STATION_NO_FAST_START) ? "OFF" : "ON"); break;
     case ITEM_RX_BEEP: {
         static const char *const RX[] = { "OFF", "NEW", "ALL" };
         strcpy(out, RX[st->rx_beep <= STATION_RX_BEEP_ALL ? st->rx_beep : 0]);
@@ -561,6 +565,8 @@ void MENU_HandleKey(KeyEvent_t ev)
         else if (sSel == ITEM_AUTOBEACON) ToggleFlag(STATION_AUTOBEACON);
         else if (sSel == ITEM_MSG_BEEP)   STATION_Toggle(STATION_MSG_QUIET);   // need no callsign
         else if (sSel == ITEM_TX_BEEP)    STATION_Toggle(STATION_TX_QUIET);
+        else if (sSel == ITEM_COMPRESSED) STATION_Toggle(STATION_COMPRESSED);
+        else if (sSel == ITEM_FAST_START) STATION_Toggle(STATION_NO_FAST_START);
         else                              StartEdit();
         break;
     case KEY_EXIT:

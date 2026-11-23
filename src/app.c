@@ -899,7 +899,7 @@ static void DrawFrequencyLine(void)
         n += frac_len;
         buf[n++] = '-';
         buf[n] = '\0';
-        GFX_TextBold(0, 1, buf);
+        GFX_Text(0, 1, buf);
         GFX_TextRight(LCD_WIDTH - 1, 1, GFX_KEY_MENU " OK " GFX_KEY_EXIT " DEL");
         return;
     }
@@ -911,10 +911,10 @@ static void DrawFrequencyLine(void)
             name[4] = (char)('0' + gSettings.memory - 1);
             name[5] = '\0';
         }
-        GFX_TextBold(0, 1, name);
+        GFX_Text(0, 1, name);
     } else {                                    // frequency mode: the frequency
         FormatMHz(gSettings.frequency, buf);
-        GFX_TextBold(0, 1, buf);
+        GFX_Text(0, 1, buf);
     }
     DrawMeter(1, X_METER, METER_W);
     DrawPageNumber(1);
@@ -1146,14 +1146,17 @@ void APP_Tick10ms(void)
         KISS_Poll10ms();
     else
         CONSOLE_Poll();
-    TXQ_Poll10ms();
+    const bool beeping = BEEP_IsPlaying();   // the BK4819 is out of receive: leave it alone
+    if (!beeping)
+        TXQ_Poll10ms();
     if (TXQ_TakeLocalSent() && !(STATION_Get()->flags & STATION_TX_QUIET))
-        BEEP_Sent();                   // our beacon / message / ack went out (not digipeats, KISS)
+        BEEP_Request(BEEP_SENT);       // our beacon / message / ack went out (not digipeats, KISS)
     MENU_Tick10ms();
     INBOX_Tick10ms();
-    RADIO_Poll();
+    if (!beeping)
+        RADIO_Poll();
 
-    if (++sRssiTicks >= RSSI_TICKS) {
+    if (!beeping && ++sRssiTicks >= RSSI_TICKS) {
         sRssiTicks = 0;
         const int16_t r = RADIO_GetRSSI_dBm();
         CHANNEL_ObserveRssi(r);
@@ -1186,20 +1189,16 @@ void APP_Tick10ms(void)
     if (MSG_TakeChanged())
         sDirty = true;
     const bool new_message = MSG_TakeNew();
-    if (packet && !new_message && RxBeepWanted()) {
-        Render();
-        BEEP_Received();               // ~150 ms: a digipeated copy right behind it may be missed
-    }
+    if (packet && !new_message && RxBeepWanted())
+        BEEP_Request(BEEP_RECEIVED);   // once the channel is quiet (beep.h)
     if (new_message) {
         static char note[4 + MSG_CALL_MAX + 1];
         strcpy(note, "MSG ");
         strcat(note, MSG_Get(0)->call);
         ShowMessageFor(note, NEW_MSG_TICKS);
         WakeBacklight();
-        if (!(STATION_Get()->flags & STATION_MSG_QUIET)) {
-            Render();                  // the note first, then the beep (blocks ~300 ms)
-            BEEP_Message();
-        }
+        if (!(STATION_Get()->flags & STATION_MSG_QUIET))
+            BEEP_Request(BEEP_MESSAGE);
     }
     static uint32_t lastSecond;
     if (APRS_NowSeconds() != lastSecond) {
@@ -1214,6 +1213,8 @@ void APP_Tick10ms(void)
         lastReceiving = APRS_IsReceiving();
         sDirty = true;
     }
+
+    BEEP_Poll10ms(!CHANNEL_IsBusy() && TXQ_Count() == 0);
 
     if (sMessageTicks && --sMessageTicks == 0) {
         sMessage = NULL;

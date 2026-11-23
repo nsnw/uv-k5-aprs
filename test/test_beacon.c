@@ -1,13 +1,16 @@
 // Host test for beacon.c: reads 64-byte BeaconConfig blobs (hex, one per line),
-// stores each via BEACON_Set and prints the TNC2 form of BEACON_BuildFrame.
-// test/beacon_vectors.py compares the output with the Python tool's idea of it.
+// stores each via BEACON_Set and prints the TNC2 form of BEACON_BuildFrame,
+// plain then compressed. test/beacon_vectors.py compares the output with the
+// Python tool's idea of it. Compressed positions are also decoded again with
+// the firmware's own parser (aprs_parse.c) across the globe.
 //
-//   cc -I . -I src -o build/test_beacon test/test_beacon.c src/beacon.c src/ax25.c
+//   cc -I . -I src -o build/test_beacon test/test_beacon.c src/beacon.c src/ax25.c src/aprs_parse.c
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include "aprs_parse.h"
 #include "ax25.h"
 #include "beacon.h"
 
@@ -51,8 +54,46 @@ static int StatusChecks(void)
     EXPECT(BEACON_HasPosition(), "has a position");
     c.lat = c.lon = 0;
     EXPECT(BEACON_Set(&c), "callsign without a position is a valid configuration");
-    EXPECT(!BEACON_HasPosition() && BEACON_BuildFrame(frame, sizeof frame) == 0, "no position report");
+    EXPECT(!BEACON_HasPosition() && BEACON_BuildFrame(frame, sizeof frame, false) == 0, "no position report");
+    EXPECT(BEACON_BuildFrame(frame, sizeof frame, true) == 0, "no compressed position report either");
     EXPECT(BEACON_BuildStatusFrame(frame, sizeof frame) > 0, "status report without a position");
+
+    // compressed positions decode to the same position (to the hundredth of
+    // a minute), symbol and comment, poles and the date line included
+    static const char *const TABLES = "/\\A9";
+    int checked = 0;
+    for (int32_t lat = -90 * 6000; lat <= 90 * 6000; lat += 1237) {
+        for (int32_t lon = -180 * 6000; lon <= 180 * 6000; lon += 2371) {
+            c.lat = lat == 0 && lon == 0 ? 1 : lat;
+            c.lon = lon;
+            c.symbol_table = TABLES[checked % 4];
+            strcpy(c.comment, "test");
+            if (!BEACON_Set(&c)) { EXPECT(0, "config %d %d rejected", lat, lon); continue; }
+            const uint16_t n = BEACON_BuildFrame(frame, sizeof frame, true);
+            const uint16_t plain = BEACON_BuildFrame(frame + 200, sizeof frame - 200, false);
+            AprsInfo info;
+            char comment[64];
+            APRS_Parse(frame, n, &info, comment, sizeof comment);
+            if (!(info.has_position && info.format == 'C' && info.lat == c.lat && info.lon == c.lon
+                  && info.symbol_table == c.symbol_table && info.symbol == c.symbol
+                  && !strcmp(comment, "test") && plain == n + 6)) {
+                EXPECT(0, "compressed %d %d table %c -> %d %d %c%c '%s' (%u vs %u bytes)", c.lat, c.lon,
+                       c.symbol_table, info.lat, info.lon, info.symbol_table, info.symbol, comment, n, plain);
+            }
+            checked++;
+        }
+    }
+    EXPECT(checked > 5000, "compressed round trips: %d", checked);
+    // the corners exactly
+    const int32_t corners[][2] = { { 90 * 6000, -180 * 6000 }, { -90 * 6000, 180 * 6000 }, { 1, 0 } };
+    for (unsigned i = 0; i < 3; i++) {
+        c.lat = corners[i][0]; c.lon = corners[i][1]; c.symbol_table = '/';
+        BEACON_Set(&c);
+        AprsInfo info;
+        char comment[64];
+        APRS_Parse(frame, BEACON_BuildFrame(frame, sizeof frame, true), &info, comment, sizeof comment);
+        EXPECT(info.lat == c.lat && info.lon == c.lon, "corner %d %d -> %d %d", c.lat, c.lon, info.lat, info.lon);
+    }
     return fail != 0;
 }
 
@@ -72,9 +113,11 @@ int main(void)
         if (!BEACON_Set(&cfg)) { printf("REJECTED\n"); continue; }
         uint8_t frame[400];
         char text[400];
-        const uint16_t len = BEACON_BuildFrame(frame, sizeof frame);
-        AX25_FormatTNC2(frame, len, text, sizeof text);
-        printf("%s\n", text);
+        for (int compressed = 0; compressed <= 1; compressed++) {
+            const uint16_t len = BEACON_BuildFrame(frame, sizeof frame, compressed);
+            AX25_FormatTNC2(frame, len, text, sizeof text);
+            printf("%s\n", text);
+        }
     }
     return StatusChecks();
 }

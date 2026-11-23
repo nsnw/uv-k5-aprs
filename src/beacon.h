@@ -76,7 +76,9 @@ bool BEACON_SetStatus(const BeaconStatus *s);  // validates and stores; false if
 
 // Build the AX.25 frames (no FCS); return the length, 0 if not configured /
 // no position. The status text is "K5-APRS <version>" when none is set.
-uint16_t BEACON_BuildFrame(uint8_t *out, uint16_t size);         // position report
+// The position report is plain ("!5102.34N/11404.86W[") or compressed
+// ("!/5L!!<*e7>[ sT", 6 bytes shorter: station.h STATION_COMPRESSED).
+uint16_t BEACON_BuildFrame(uint8_t *out, uint16_t size, bool compressed);   // position report
 uint16_t BEACON_BuildStatusFrame(uint8_t *out, uint16_t size);   // status report
 
 // Queues a beacon on the current frequency, per the beacon type.
@@ -85,8 +87,12 @@ BeaconResult BEACON_SendPosition(void);        // ?APRSP: the position report on
 BeaconResult BEACON_SendStatus(void);          // ?APRSS: the status report only
 
 // Auto-beacon (station.h STATION_AUTOBEACON): call once a second. The first
-// beacon goes BEACON_FIRST_S after boot or switching it on, then one every
-// beacon_interval_min.
+// beacon goes BEACON_FIRST_S after boot, switching it on or changing the
+// beacon (position, symbol, comment, path, status...), then one every
+// beacon_interval_min. Fast start (unless STATION_NO_FAST_START): the gaps
+// begin at 1 minute and double up to the interval (1, 2, 4, 8, 10, 10 ... for
+// 10 minutes), so the station shows up on maps quickly without filling the
+// channel. A manual beacon (hold F) doesn't change the schedule.
 #define BEACON_FIRST_S 10
 void BEACON_Poll1s(uint32_t now_s);
 void BEACON_RestartTimer(void);

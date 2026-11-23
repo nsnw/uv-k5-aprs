@@ -13,7 +13,8 @@ static bool Valid(const StationConfig *c)
     return c->magic == STATION_MAGIC
         && c->txdelay_flags >= 1 && c->txdelay_flags <= 200
         && c->txtail_flags >= 1 && c->txtail_flags <= 50
-        && (c->flags & ~(STATION_DIGI | STATION_AUTOBEACON | STATION_MSG_QUIET | STATION_TX_QUIET)) == 0
+        && (c->flags & ~(STATION_DIGI | STATION_AUTOBEACON | STATION_MSG_QUIET | STATION_TX_QUIET
+                         | STATION_COMPRESSED | STATION_NO_FAST_START)) == 0
         && c->digi_max_hops >= 1 && c->digi_max_hops <= 7
         && c->beacon_interval_min >= 1 && c->beacon_interval_min <= 1440
         && c->rx_beep <= STATION_RX_BEEP_ALL;

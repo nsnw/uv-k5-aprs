@@ -132,6 +132,30 @@ int I2C_Write(uint8_t Data)
     return ret;
 }
 
+bool I2C_IsSdaHeld(void)
+{
+    PORTCON_PORTA_OD |= PORTCON_PORTA_OD_A11_BITS_ENABLE;   // as I2C_Read/Write leave it
+    GPIO_SetBit(&GPIOA->DATA, GPIOA_PIN_I2C_SDA);            // release
+    PORTCON_PORTA_IE |= PORTCON_PORTA_IE_A11_BITS_ENABLE;
+    GPIOA->DIR &= ~GPIO_DIR_11_MASK;
+    SYSTICK_DelayUs(2);
+    const bool held = GPIO_CheckBit(&GPIOA->DATA, GPIOA_PIN_I2C_SDA) == 0;
+    GPIOA->DIR |= GPIO_DIR_11_BITS_OUTPUT;
+    PORTCON_PORTA_IE &= ~PORTCON_PORTA_IE_A11_MASK;
+    return held;
+}
+
+void I2C_Recover(void)
+{
+    for (int i = 0; i < 9 && I2C_IsSdaHeld(); i++) {
+        GPIO_ClearBit(&GPIOA->DATA, GPIOA_PIN_I2C_SCL);
+        SYSTICK_DelayUs(5);
+        GPIO_SetBit(&GPIOA->DATA, GPIOA_PIN_I2C_SCL);
+        SYSTICK_DelayUs(5);
+    }
+    I2C_Stop();
+}
+
 int I2C_ReadBuffer(void *pBuffer, uint8_t Size)
 {
     uint8_t *pData = (uint8_t *)pBuffer;

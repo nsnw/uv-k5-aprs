@@ -176,6 +176,7 @@ static void KeyUp(uint32_t f, uint8_t bias)
     BK4819_SetupPowerAmplifier(bias, f);
     SYSTEM_DelayMs(10);
     BK4819_ExitSubAu();
+    BK4819_ToggleGpioOut(BK4819_GPIO6_PIN2_GREEN, false);   // red only: not left yellow from "queued"
     BK4819_ToggleGpioOut(BK4819_GPIO5_PIN1_RED, true);
 
     // tone-1 generator into the TX path (as BK4819_TransmitTone)

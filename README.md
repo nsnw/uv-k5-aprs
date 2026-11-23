@@ -3,7 +3,7 @@
 APRS station firmware for the Quansheng UV-K5: receive, beacon, digipeat,
 send and receive messages and run as a KISS TNC, all from a $30 handheld.
 
-This is K5-APRS 0.9.1. It grew out of **[uv-k5-minimal](https://github.com/nsnw/uv-k5-minimal)**, a small
+This is K5-APRS 0.9.2a. It grew out of **[uv-k5-minimal](https://github.com/nsnw/uv-k5-minimal)**, a small
 from-scratch firmware for the same radio. The low-level drivers come from
 the open UV-K5 firmware projects (see [Credits](#credits)); everything above
 them is new, and was mostly written by Claude (see [Yes, an AI wrote this](#yes-an-ai-wrote-this)).
@@ -43,7 +43,10 @@ match the radio's 128×64 LCD pixel for pixel.
   both, on demand or automatically every 1–1440 minutes. Without a position
   (none typed in, e.g. a digipeater) it sends the status report, so a
   callsign is all it needs. Symbol chosen on the radio from a list of common
-  ones.
+  ones. Position reports can be compressed (6 bytes, ~40 ms shorter on air).
+  **Fast start**: after power-on or a change to the beacon, the automatic
+  beacons start 1, 2, 4 … minutes apart and slow to the set interval, so the
+  station shows up on maps quickly without filling the channel.
 - **Digipeater**: WIDEn-N (New-N paradigm) up to a set number of hops, or
   fill-in only (WIDE1-1), with duplicate suppression.
 - **Messages**: received messages are acked automatically, including
@@ -64,6 +67,8 @@ match the radio's 128×64 LCD pixel for pixel.
   digipeater and TX timing, all from the keypad.
 - **A short beep** after each beacon, message, ack or query answer this station
   sends (not digipeated or KISS frames); **TX beep** in the settings turns it off.
+  The radio can't receive while it beeps, so beeps wait until the channel has
+  been quiet for a second (at most 5 s), after any digipeated copies.
 - **The front LED**: red while transmitting, a green flash for each packet
   decoded, green while you hold PTT to monitor, yellow while a beacon,
   message or ack waits for a clear channel, and a short yellow blink every
@@ -163,8 +168,8 @@ heard direct in the last 30 minutes. At most one answer every 10 s.
 
 ### Settings (hold `MENU`)
 
-Memories, Callsign, SSID, Lat, Lon, Symbol, Comment, Path, Beacon type, Status,
-Auto beacon, Beacon every,
+Memories, Callsign, SSID, Lat, Lon, Symbol, Comment, Path, Compressed,
+Beacon type, Status, Auto beacon, Beacon every, Fast start,
 Digipeater, Digi hops, Msg beep, TX beep, RX beep, TX delay, TX tail, About.
 
 `UP`/`DOWN` move and change values, `MENU` edits and saves, `EXIT` cancels or
@@ -176,7 +181,10 @@ position is set), `STATUS` only the status report, `BOTH` both. **Status** is
 the status text (up to 62 characters; empty sends the firmware name and
 version), also the answer to `?APRSS`. **Symbol** steps through common APRS
 symbols (person, car, van, truck, bicycle, house, digipeater, weather ...);
-others can be set with `k5 beacon set --symbol`. **About** shows the version,
+others can be set with `k5 beacon set --symbol`. **Compressed** sends
+compressed position reports (APRS101 chapter 9). **Fast start** (on by
+default) beacons 1, 2, 4 … minutes apart after power-on or a change to the
+beacon, up to **Beacon every**. **About** shows the version,
 the build (git commit), how long the radio has been on and the author;
 `MENU` or `EXIT` goes back.
 
@@ -236,8 +244,15 @@ With a native `arm-none-eabi-gcc` and `python3 -m pip install crcmod`, plain
 never keys the transmitter. The version number is set in the `Makefile`.
 
 The host tests (decoder/encoder loopback, digipeater, KISS, messages and
-queries, menu, beacon, distance/bearing, EEPROM storage) run with the system
-C compiler: `test/run.sh`.
+queries, menu, beacons and their schedule, beeps, distance/bearing, EEPROM
+storage) run with the system C compiler: `test/run.sh`.
+
+`./release.sh` builds the release images from a clean tree (full and
+receive-only, raw and packed, with `SHA256SUMS`) into `dist/`. The images are
+reproducible: building the same commit again gives identical files. GitHub
+Actions (`.github/workflows/ci.yml`) runs the tests, renders the screenshots
+and builds the images on every push; on a `v*` tag it attaches them to the
+release (creating a draft if there isn't one).
 
 `test/screens.sh` renders screenshots of every main screen (boot, station
 list and details, messages, beacons, settings, KISS) into `build/screens/`,

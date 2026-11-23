@@ -23,11 +23,14 @@ out = subprocess.run(["build/test_beacon"], input="\n".join(blobs) + "\n",
                      capture_output=True, text=True, check=True).stdout.splitlines()
 print(out[0])
 ok = out[0].startswith("blank")
-for c, got in zip(cases, out[1:]):
-    match = got == c.tnc2()
-    ok &= match
-    print(("ok   " if match else "DIFF ") + got + ("" if match else f"\n     want {c.tnc2()}"))
-for got in out[1 + len(cases):]:
+got_lines = iter(out[1:])
+for c in cases:
+    for compressed in (False, True):
+        got, want = next(got_lines), c.tnc2(compressed)
+        match = got == want
+        ok &= match
+        print(("ok   " if match else "DIFF ") + got + ("" if match else f"\n     want {want}"))
+for got in got_lines:
     ok &= got == "REJECTED"
     print(("ok   " if got == "REJECTED" else "DIFF ") + f"invalid config -> {got}")
 sys.exit(0 if ok else 1)

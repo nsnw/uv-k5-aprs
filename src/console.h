@@ -12,7 +12,7 @@
 //   p N           words to read automatically on each FIFO-almost-full
 //                 interrupt (default 4, 0 = don't read)            -> "P N"
 //   t FREQ        tune; FREQ is DECIMAL in 10 Hz units             -> "T FREQ"
-//   y             keypad diagnostics: GPIOA DIR, raw input per scan row, key
+//   y             keypad diagnostics: GPIOA DIR, raw input per scan row, key, I2C bus recoveries
 //   v             version                                          -> "V ..."
 //   c             beacon configuration (64-byte BeaconConfig)      -> "C HEX" (or "C -" if unset)
 //   c HEX         validate and store a new beacon configuration    -> "C HEX"
