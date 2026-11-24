@@ -30,6 +30,14 @@ int main(void)
 {
     char ack[6];
 
+    // addressees: stations and services
+    const char *good[] = { "VE6HUE", "VE6HUE-7", "VE6CXZ-15", "RFDATA", "ANSRVR", "EMAIL-2", "WHO-IS", "WLNK-1", "BLN1", "A" };
+    const char *bad[]  = { "", "-RF", "RF-", "TOOLONGXYZ", "ve6hue", "VE6 HUE", "VE6HUE:", "RF.DATA" };
+    for (unsigned i = 0; i < sizeof good / sizeof *good; i++)
+        CHECK(MSG_ValidAddressee(good[i]), "addressee '%s' accepted", good[i]);
+    for (unsigned i = 0; i < sizeof bad / sizeof *bad; i++)
+        CHECK(!MSG_ValidAddressee(bad[i]), "addressee '%s' rejected", bad[i]);
+
     CHECK(Feed("VE6HUE-7", ":VE6CXZ-1 :hello there{42", 100, ack), "message stored");
     CHECK(strcmp(ack, "42") == 0, "ack id 42 (got '%s')", ack);
     CHECK(MSG_Count() == 1 && MSG_Unread() == 1, "one unread");

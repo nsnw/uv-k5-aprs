@@ -3,7 +3,7 @@
 APRS station firmware for the Quansheng UV-K5: receive, beacon, digipeat,
 send and receive messages and run as a KISS TNC, all from a $30 handheld.
 
-This is K5-APRS 0.9.2a. It grew out of **[uv-k5-minimal](https://github.com/nsnw/uv-k5-minimal)**, a small
+This is K5-APRS 0.9.2b. It grew out of **[uv-k5-minimal](https://github.com/nsnw/uv-k5-minimal)**, a small
 from-scratch firmware for the same radio. The low-level drivers come from
 the open UV-K5 firmware projects (see [Credits](#credits)); everything above
 them is new, and was mostly written by Claude (see [Yes, an AI wrote this](#yes-an-ai-wrote-this)).
@@ -196,7 +196,7 @@ A B C 2, and pressing it again within a second moves to the next letter.
 | Key | Action |
 |---|---|
 | `0`–`9` | Letters and digits (`0` = space, `1` = punctuation) |
-| `UP` / `DOWN` | Step through every character at the cursor |
+| `UP` / `DOWN` | Step through every character at the cursor (moves on after a second, like a number key) |
 | `*` / `F` | Cursor left / right |
 | `SIDE1` | Upper / lower case |
 | `EXIT` | Delete (hold: cancel) |
@@ -209,7 +209,9 @@ before a key means hold it.
 Writing a message is one screen: **To** with the callsign and SSID as one
 field (`VE6LY-7`; `1` types the `-`), then the text, with its length at the
 right. `MENU` moves from the callsign to the text, then sends; `EXIT` with no
-text yet goes back to the callsign. A reply starts in the text.
+text yet goes back to the callsign. A reply starts in the text. Services
+work too (`RFDATA`, `ANSRVR`, `EMAIL-2`, `WHO-IS`): any 1–9 letters, digits
+and dashes.
 
 ## Getting started
 

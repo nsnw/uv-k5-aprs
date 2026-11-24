@@ -19,6 +19,7 @@ run test_hdlc_tx ""                src/hdlc_tx.c src/ax25.c
 run test_digi    "-DDIGI_HOST_TEST" src/digi.c src/ax25.c
 run test_kiss    "-DENABLE_TX"      src/kiss.c src/txq.c
 run test_menu    ""                src/menu.c src/memory.c src/textedit.c
+run test_textedit ""              src/textedit.c
 run test_msg     "-DMSG_HOST_TEST"  src/msg.c
 run test_geo     ""                src/geo.c
 run test_beep    ""                src/beep.c

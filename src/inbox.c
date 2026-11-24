@@ -48,32 +48,13 @@ bool INBOX_IsComposing(void) { return sOpen && (sView == V_TO || sView == V_TEXT
 
 // ---------------------------------------------------------------- compose
 
-// "VE6HUE-7": 1-6 letters/digits with at least one of each, optional -SSID 0-15.
-static bool ValidCall(char *c)          // trims the padding
+// Trims the editor's padding, then checks it as an addressee (msg.h).
+static bool ValidCall(char *c)
 {
     uint8_t n = MSG_CALL_MAX;
     while (n && c[n - 1] == ' ') n--;
     c[n] = '\0';
-    const char *dash = strchr(c, '-');
-    const uint8_t base = dash ? (uint8_t)(dash - c) : n;
-    bool letter = false, digit = false;
-    if (base < 3 || base > 6) return false;
-    for (uint8_t i = 0; i < base; i++) {
-        if (c[i] >= 'A' && c[i] <= 'Z')      letter = true;
-        else if (c[i] >= '0' && c[i] <= '9') digit = true;
-        else return false;
-    }
-    if (dash) {
-        const char *s = dash + 1;
-        if (!*s || strlen(s) > 2) return false;
-        uint8_t v = 0;
-        for (; *s; s++) {
-            if (*s < '0' || *s > '9') return false;
-            v = (uint8_t)(v * 10 + (*s - '0'));
-        }
-        if (v < 1 || v > 15) return false;
-    }
-    return letter && digit;
+    return MSG_ValidAddressee(c);
 }
 
 static void ComposeTo(const char *call)  // NULL: ask for the callsign first
@@ -149,7 +130,7 @@ static void ComposeKey(KeyEvent_t ev)
             sView = V_TEXT;
         } else {                                // stay on it, padded again for the editor
             for (uint8_t i = (uint8_t)strlen(sTo); i < MSG_CALL_MAX; i++) sTo[i] = ' ';
-            APP_ShowMessage("BAD CALLSIGN", false);
+            APP_ShowMessage("BAD ADDRESSEE", false);
         }
         break;
     default:

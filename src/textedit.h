@@ -8,7 +8,7 @@
 
 // Keypad text entry, phone style: 2 = A B C 2 ..., the same key again within
 // a second cycles its characters, otherwise the cursor moves on.
-//   UP / DOWN    cycle the character at the cursor
+//   UP / DOWN    cycle the character at the cursor (moves on after a second too)
 //   * / F        cursor left / right
 //   SIDE1        upper / lower case (TE_TEXT)
 //   EXIT         delete (hold: cancel)

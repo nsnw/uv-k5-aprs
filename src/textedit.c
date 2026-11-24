@@ -29,6 +29,7 @@ static uint8_t sMax;
 static TeMode  sMode;
 static uint8_t sCursor;
 static int8_t  sTapKey = -1;        // key being multi-tapped, -1 = none
+#define TAP_CYCLE 10                // ... or UP/DOWN (moves on after the timeout too)
 static uint8_t sTapIndex;
 static uint8_t sTapTicks;
 static bool    sFresh;
@@ -87,26 +88,29 @@ static void Keypad(uint8_t key)
     sTapTicks = MULTITAP_TICKS;
 }
 
-static void Cycle(int dir)              // UP/DOWN on the character at the cursor
+// UP/DOWN on the character at the cursor (also one just multi-tapped). Like
+// a multi-tap, the cursor moves on once the keys have been left for a second.
+static void Cycle(int dir)
 {
-    sTapKey = -1;
-    sFresh  = false;
+    sFresh = false;
     if (Fixed()) {
         const char *set = sMode == TE_CALL ? CALL_CHARS : NAME_CHARS;
         const int n = (int)strlen(set);
         const char *p = strchr(set, sBuf[sCursor]);
         const int i = p ? (int)(p - set) : 0;
         sBuf[sCursor] = set[(i + n + dir) % n];
-        return;
+    } else {
+        if (sCursor == Len()) {         // at the end: add a character to cycle
+            if (sCursor >= sMax)
+                return;
+            sBuf[sCursor] = ' ';
+            sBuf[sCursor + 1] = '\0';
+        }
+        const int c = sBuf[sCursor] - ' ', n = '~' - ' ' + 1;
+        sBuf[sCursor] = (char)(' ' + (c + n + dir) % n);
     }
-    if (sCursor == Len()) {             // at the end: add a character to cycle
-        if (sCursor >= sMax)
-            return;
-        sBuf[sCursor] = ' ';
-        sBuf[sCursor + 1] = '\0';
-    }
-    const int c = sBuf[sCursor] - ' ', n = '~' - ' ' + 1;
-    sBuf[sCursor] = (char)(' ' + (c + n + dir) % n);
+    sTapKey   = TAP_CYCLE;
+    sTapTicks = MULTITAP_TICKS;
 }
 
 static void MoveCursor(int dir)

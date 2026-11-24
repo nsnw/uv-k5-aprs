@@ -63,6 +63,11 @@ void MSG_MarkRead(uint8_t i);
 void MSG_Delete(uint8_t i);
 bool MSG_TakeNew(void);                  // true once per newly stored message
 
+// Who a message can go to: 1-9 of A-Z, 0-9 and '-', not starting or
+// ending with '-'. A station ("VE6HUE-7") or a service without a digit or
+// a numeric SSID ("RFDATA", "ANSRVR", "EMAIL-2", "WHO-IS").
+bool MSG_ValidAddressee(const char *to);
+
 // Sends `text` to `to` (queued for the transmitter; retried until acked).
 // False if there's nowhere to send from: no callsign, not a TX frequency or
 // the TX queue is full.

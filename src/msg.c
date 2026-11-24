@@ -126,6 +126,19 @@ static bool SendCopy(AprsMessage *m)
     return Transmit(m->call, text);
 }
 
+bool MSG_ValidAddressee(const char *to)
+{
+    const size_t n = strlen(to);
+    if (n == 0 || n > MSG_CALL_MAX || to[0] == '-' || to[n - 1] == '-')
+        return false;
+    for (size_t i = 0; i < n; i++) {
+        const char c = to[i];
+        if (!((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-'))
+            return false;
+    }
+    return true;
+}
+
 bool MSG_Send(const char *to, const char *text, uint32_t now_s)
 {
     AprsMessage m;
