@@ -36,6 +36,8 @@ void SETTINGS_Load(void)
     }
     if (gSettings.list_by_distance > 1)
         gSettings.list_by_distance = 0;
+    if (gSettings.kiss > 1)
+        gSettings.kiss = 0;
 }
 
 void SETTINGS_Save(void)

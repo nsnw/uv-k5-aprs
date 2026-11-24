@@ -24,6 +24,7 @@ static bool     sBusy;
 static uint8_t  sTxFrame[TX_MAX_FRAME];
 static uint16_t sTxLen;
 static int      sTxCount;
+static TxResult sTxResult = TX_OK;      // what the transmitter says
 static uint8_t  sTxFlags;
 static void   (*sHook)(void);
 static const char *sLastMsg;
@@ -45,7 +46,7 @@ TxResult TX_SendFrame(const uint8_t *f, uint16_t n, uint16_t *ms)
     sTxLen = n;
     sTxCount++;
     sTxFlags = gTxConfig.preamble_flags;
-    return TX_OK;
+    return sTxResult;
 }
 
 // ---------------------------------------------------------------- helpers
@@ -217,6 +218,30 @@ int main(void)
     CHECK(r == KISS_PROBE_PENDING && !KISS_IsActive(), "empty frames: still waiting");
     KISS_ProbeCancel();
     CHECK(KISS_ProbeByte(0x00) == KISS_PROBE_REJECTED, "after cancel: rejected");
+
+    // ------------------------------------------------ stats: received, dropped, refused by the transmitter
+    {
+        KISS_Enter();
+        const KissStats before = *KISS_GetStats();
+        const uint16_t refused_before = TXQ_HostRefused();
+        uint8_t f[40], w[48];
+        const unsigned n = Ui(f, 10);
+        HostSends(w, Wrap(w, 0x00, f, n));          // a good frame, sent
+        f[14] = 0x3F;                               // not a UI frame: dropped here
+        HostSends(w, Wrap(w, 0x00, f, n));
+        RunTicks(300);
+        CHECK(KISS_GetStats()->from_host == before.from_host + 2, "two frames from the host (%u)", KISS_GetStats()->from_host - before.from_host);
+        CHECK(KISS_GetStats()->refused == before.refused + 1, "one dropped (%u)", KISS_GetStats()->refused - before.refused);
+        CHECK(TXQ_HostRefused() == refused_before, "none refused by the transmitter yet");
+        sTxResult = TX_ERR_FREQUENCY;               // e.g. tuned outside the TX bands
+        f[14] = 0x03;
+        HostSends(w, Wrap(w, 0x00, f, n));
+        RunTicks(300);
+        CHECK(TXQ_HostRefused() == refused_before + 1, "refused by the transmitter: counted (%u)", TXQ_HostRefused() - refused_before);
+        CHECK(TXQ_Count() == 0, "and not retried");
+        sTxResult = TX_OK;
+        KISS_Exit();
+    }
 
     printf("%d passed, %d failed\n", sPass, sFail);
     return sFail != 0;

@@ -3,7 +3,7 @@
 APRS station firmware for the Quansheng UV-K5: receive, beacon, digipeat,
 send and receive messages and run as a KISS TNC, all from a $30 handheld.
 
-This is K5-APRS 0.9.2b. It grew out of **[uv-k5-minimal](https://github.com/nsnw/uv-k5-minimal)**, a small
+This is K5-APRS 0.9.3a. It grew out of **[uv-k5-minimal](https://github.com/nsnw/uv-k5-minimal)**, a small
 from-scratch firmware for the same radio. The low-level drivers come from
 the open UV-K5 firmware projects (see [Credits](#credits)); everything above
 them is new, and was mostly written by Claude (see [Yes, an AI wrote this](#yes-an-ai-wrote-this)).
@@ -61,6 +61,9 @@ match the radio's 128×64 LCD pixel for pixel.
   APRSIS32, …); `k5 kiss serve` turns it into a KISS-over-TCP server.
   It switches to KISS only on a complete, valid KISS frame (or hold `*`), so
   line noise can't flip it, and only AX.25 UI frames (PID F0) are transmitted.
+  While it's on, the computer is the station: the radio's own beacon,
+  digipeater and message retries pause, and carry on when KISS ends. It
+  stays on across power-off.
 - **10 memories** with 6-character names, and a memory mode that shows the
   name instead of the frequency.
 - **On-radio settings**: callsign, SSID, position, comment, path, beacon,
@@ -142,6 +145,33 @@ as small inverted **M** and **E** icons.
 | PTT | Monitor: opens the speaker while held |
 
 PTT never transmits: everything K5-APRS sends is an APRS packet.
+
+### KISS mode (hold `*`)
+
+![KISS mode](docs/screenshots/24-kiss.png)
+
+While the KISS TNC is on, one page replaces the four: the frequency (or the
+memory's name) in big digits with the signal meter and whether the channel
+is busy, and counts of frames heard and sent on air, frames from the
+computer, and frames refused. The arrows after `KISS` light while data goes
+up to the computer (▲) or down from it (▼).
+
+The computer is the station, so the radio's own beacon, digipeater and
+message retries pause until KISS ends.
+
+The radio remembers KISS mode across power-off, so after a power cut it
+comes back as a TNC for the computer that's still attached. The `k5`
+commands that use the text console (`k5 config`, `k5 beacon` and so on)
+take it out of KISS for the moment they need and put it back afterwards.
+
+| Key | Action |
+|---|---|
+| `UP` / `DOWN` | Next / previous memory |
+| `0`–`9`, hold `0`–`9`, hold `EXIT` | As above: type a frequency, go to a memory, frequency / memory mode |
+| hold `MENU` | Settings |
+| hold `*` | Leave KISS |
+
+`SIDE1`, `SIDE2` and `F` wait until you leave KISS.
 
 ### Messages page (`F`)
 

@@ -207,6 +207,8 @@ TxResult TX_SendFrame(const uint8_t *frame, uint16_t len, uint16_t *on_air_ms)
     uint16_t ms = 0;
     const TxResult r = SendFrame(frame, len, &ms);
     gTxStats.attempts++;
+    if (r == TX_OK)
+        gTxStats.sent++;
     gTxStats.last_result = (uint8_t)r;
     gTxStats.last_ms     = (r == TX_OK) ? ms : 0;
     if (on_air_ms)

@@ -174,7 +174,8 @@ static void OnFrame(const uint8_t *frame, uint16_t len)
     sTotal++;
     sNewPacket = true;
 
-    DIGI_OnFrame(frame, len, now);
+    if (!KISS_IsActive())                  // in KISS the computer digipeats, if anything
+        DIGI_OnFrame(frame, len, now);
     MSG_OnFrame(frame, len, now);
 
     AX25_FormatTNC2(frame, len, sLastLine, sizeof sLastLine);

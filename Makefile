@@ -2,7 +2,7 @@
 
 TARGET    ?= k5-aprs
 APP_NAME  := K5-APRS
-VERSION   ?= 0.9.2b
+VERSION   ?= 0.9.3a
 BUILD_ID  ?= $(shell git describe --always --dirty 2>/dev/null || echo dev)
 BUILD     := build
 # ENABLE_TX=0 builds a receive-only firmware (the transmitter is never keyed).

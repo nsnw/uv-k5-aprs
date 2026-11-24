@@ -9,11 +9,14 @@
 
 typedef struct {
     uint16_t    len;
-    bool        local;                 // originated here (TXQ_PushLocal)
+    uint8_t     origin;                // ORIGIN_*
     uint8_t     data[TX_MAX_FRAME];
 } QueuedFrame;
 
+enum { ORIGIN_DIGI, ORIGIN_LOCAL, ORIGIN_HOST };   // digipeated / ours / the KISS host
+
 static QueuedFrame sQueue[TXQ_SLOTS];
+static uint16_t    sHostRefused;
 static uint8_t     sHead, sCount;
 static uint8_t     sPersist = TXQ_DEFAULT_P;
 static uint8_t     sSlot10ms = TXQ_DEFAULT_SLOT_10MS;
@@ -29,7 +32,7 @@ static uint8_t Random(void)                // xorshift8
     return sRandom;
 }
 
-static bool Push(const uint8_t *frame, uint16_t len, bool local)
+static bool Push(const uint8_t *frame, uint16_t len, uint8_t origin)
 {
     if (sCount >= TXQ_SLOTS || len > TX_MAX_FRAME)
         return false;
@@ -38,13 +41,15 @@ static bool Push(const uint8_t *frame, uint16_t len, bool local)
     QueuedFrame *q = &sQueue[(sHead + sCount) % TXQ_SLOTS];
     memcpy(q->data, frame, len);
     q->len   = len;
-    q->local = local;
+    q->origin = origin;
     sCount++;
     return true;
 }
 
-bool TXQ_Push(const uint8_t *frame, uint16_t len)      { return Push(frame, len, false); }
-bool TXQ_PushLocal(const uint8_t *frame, uint16_t len) { return Push(frame, len, true); }
+bool TXQ_Push(const uint8_t *frame, uint16_t len)      { return Push(frame, len, ORIGIN_DIGI); }
+bool TXQ_PushLocal(const uint8_t *frame, uint16_t len) { return Push(frame, len, ORIGIN_LOCAL); }
+bool TXQ_PushHost(const uint8_t *frame, uint16_t len)  { return Push(frame, len, ORIGIN_HOST); }
+uint16_t TXQ_HostRefused(void) { return sHostRefused; }
 
 bool TXQ_TakeLocalSent(void)
 {
@@ -77,8 +82,10 @@ void TXQ_Poll10ms(void)
     APP_SetTransmitting(true);          // drawn now: the screen freezes while on air
     const TxResult r = TX_SendFrame(q->data, q->len, NULL);
     APP_SetTransmitting(false);
-    if (r == TX_OK && q->local)
+    if (r == TX_OK && q->origin == ORIGIN_LOCAL)
         sLocalSent = true;
+    if (r != TX_OK && q->origin == ORIGIN_HOST)
+        sHostRefused++;
     sHead = (sHead + 1) % TXQ_SLOTS;
     sCount--;
     if (r != TX_OK)
@@ -91,6 +98,8 @@ void TXQ_Poll10ms(void)
 bool TXQ_Push(const uint8_t *f, uint16_t n) { (void)f; (void)n; return false; }
 bool TXQ_PushLocal(const uint8_t *f, uint16_t n) { (void)f; (void)n; return false; }
 bool TXQ_TakeLocalSent(void) { return false; }
+bool TXQ_PushHost(const uint8_t *f, uint16_t n) { (void)f; (void)n; return false; }
+uint16_t TXQ_HostRefused(void) { return 0; }
 void TXQ_Poll10ms(void) {}
 void TXQ_Clear(void) {}
 uint8_t TXQ_Count(void) { return 0; }

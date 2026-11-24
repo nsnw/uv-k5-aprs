@@ -29,6 +29,8 @@
 #define FLAG_X100_MS    667     // one 0x7E flag = 8 bits at 1200 baud = 6.67 ms
 
 static bool sActive;
+static KissStats sStats;
+static volatile uint8_t sFromTicks, sToTicks;   // KISS_Activity(); PushByte runs in the TX hook too
 static bool sExitRequested;     // C0 FF C0 seen; handled outside the TX hook
 static uint8_t sP = TXQ_DEFAULT_P, sSlot = TXQ_DEFAULT_SLOT_10MS;
 
@@ -45,6 +47,8 @@ static int8_t   sProbeResult;              // KissProbe
 // 2-10 addresses of upper-case letters, digits and padding spaces (shifted
 // left, extension bit only on the last), then control 0x03 (P/F allowed) and
 // PID 0xF0. Anything else from the serial line is noise or not for us.
+const KissStats *KISS_GetStats(void) { return &sStats; }
+
 bool KISS_ValidAx25(const uint8_t *f, uint16_t n)
 {
     if (n < 16 || n > KISS_MAX_FRAME)
@@ -109,8 +113,9 @@ static void HandleFrame(const uint8_t *p, uint16_t n)
     // Parameters last until KISS mode ends, then the station's own apply.
     switch (cmd & 0x0F) {
     case CMD_DATA:
-        if (KISS_ValidAx25(p + 1, (uint16_t)(n - 1)))
-            TXQ_Push(p + 1, n - 1);   // full: dropped (KISS has no flow control)
+        sStats.from_host++;
+        if (!KISS_ValidAx25(p + 1, (uint16_t)(n - 1)) || !TXQ_PushHost(p + 1, n - 1))
+            sStats.refused++;           // full: dropped (KISS has no flow control)
         break;
 #ifdef ENABLE_TX
     case CMD_TXDELAY:
@@ -133,6 +138,7 @@ static void HandleFrame(const uint8_t *p, uint16_t n)
 
 void KISS_PushByte(uint8_t b)
 {
+    sFromTicks = KISS_ACTIVITY_TICKS;
     if (b == FEND) {
         if (sInFrame && sInLen > 0 && !sInBad)
             HandleFrame(sIn, sInLen);
@@ -198,6 +204,7 @@ void KISS_SendFrame(const uint8_t *frame, uint16_t len)
     static const uint8_t start[2] = { FEND, CMD_DATA };
     static const uint8_t esc_fend[2] = { FESC, TFEND };
     static const uint8_t esc_fesc[2] = { FESC, TFESC };
+    sToTicks = KISS_ACTIVITY_TICKS;
     UART_Send(start, 2);
     uint16_t run = 0;                      // bytes not needing escapes, sent in runs
     for (uint16_t i = 0; i < len; i++) {
@@ -251,8 +258,15 @@ void KISS_Exit(void)
 
 bool KISS_IsActive(void) { return sActive; }
 
+uint8_t KISS_Activity(void)
+{
+    return (uint8_t)((sFromTicks ? KISS_FROM_HOST : 0) | (sToTicks ? KISS_TO_HOST : 0));
+}
+
 void KISS_Poll10ms(void)
 {
+    if (sFromTicks) sFromTicks--;
+    if (sToTicks)   sToTicks--;
     // Up to 160 bytes per tick (the line delivers ~38): keeps up easily.
     for (int i = 0; i < 10 && !sExitRequested; i++)
         Drain();

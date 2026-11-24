@@ -34,6 +34,10 @@
 //   hold *       KISS TNC on/off on the programming cable (see kiss.h)
 //   PTT          monitor
 //
+// KISS has one page (RenderKiss) in place of these: UP / DOWN step through
+// the memories, 0-9 / hold 0-9 / hold EXIT / hold MENU as above, hold * ends
+// it. SIDE1, SIDE2 and F say "HOLD * FOR APRS".
+//
 // The front LED: red while transmitting, a green flash for each packet,
 // green while monitoring, yellow while a frame waits to go out, a short
 // yellow blink every 2 s while messages are unread (UpdateLed).
@@ -97,6 +101,7 @@ static uint16_t sSaveTicks;      // 0 = nothing pending
 static uint32_t sSavedFrequency;
 static uint8_t  sSavedMemory;
 static uint8_t  sSavedListMode;
+static uint8_t  sSavedKiss;
 static uint8_t  sRssiTicks;
 static int16_t  sRssi_dBm = -160;
 static char     sAprsSel[10];    // selected station's callsign ("" = first)
@@ -198,6 +203,26 @@ static void ToggleMemoryMode(void)
         if (MEM_Get(i) && SelectMemory(i))
             return;
     ShowMessage("NO MEMORIES");
+}
+
+// UP/DOWN in KISS: the next / previous stored memory, wrapping. In memory
+// mode it's selected; in frequency mode only its frequency is tuned.
+static void StepMemory(int dir)
+{
+    const int cur = gSettings.memory ? gSettings.memory - 1 : MEM_Find(gSettings.frequency);
+    const int from = cur >= 0 ? cur : dir > 0 ? -1 : MEM_COUNT;   // not on one: from the first / last
+    for (int n = 1; n <= MEM_COUNT; n++) {
+        const uint8_t slot = (uint8_t)((from + dir * n + MEM_COUNT * 2) % MEM_COUNT);
+        const MemoryEntry *m = MEM_Get(slot);
+        if (!m || (int)slot == cur)
+            continue;
+        if (gSettings.memory)
+            SelectMemory(slot);
+        else
+            APP_SetFrequency(m->frequency);
+        return;
+    }
+    ShowMessage(MEM_Find(gSettings.frequency) >= 0 ? "ONE MEMORY" : "NO MEMORIES");
 }
 
 // The memory was cleared or overwritten (settings menu): back to frequency mode.
@@ -433,6 +458,23 @@ static void HandleKey(KeyEvent_t ev)
         return;
     }
 
+    // KISS: one page and the computer is the station. UP / DOWN step through
+    // the memories; the pages, messages and beacon (SIDE1, SIDE2, F) wait for
+    // KISS to end (hold *). Digits, EXIT, hold MENU and hold * work as usual.
+    if (KISS_IsActive()) {
+        if (k == KEY_SIDE1 || k == KEY_SIDE2 || k == KEY_F) {
+            if (press)
+                ShowMessage("HOLD * FOR APRS");
+            return;
+        }
+        if ((k == KEY_UP || k == KEY_DOWN) && !sEntryLen) {
+            if (press || repeat)
+                StepMemory(k == KEY_UP ? +1 : -1);
+            sDirty = true;
+            return;
+        }
+    }
+
     // SIDE1 / SIDE2: previous / next page.
     if ((k == KEY_SIDE1 || k == KEY_SIDE2) && !INBOX_IsComposing()) {
         if (press)
@@ -488,7 +530,7 @@ static void HandleKey(KeyEvent_t ev)
             if (KISS_IsActive()) KISS_Exit(); else KISS_Enter();
         } else if (ev.type == KEV_RELEASE && sStarKeyDown) {
             sStarKeyDown = false;
-            if (sPage == PAGE_STATIONS)
+            if (sPage == PAGE_STATIONS && !KISS_IsActive())
                 ToggleListOrder();
         }
         sDirty = true;
@@ -505,7 +547,7 @@ static void HandleKey(KeyEvent_t ev)
             MENU_Open();
         } else if (ev.type == KEV_RELEASE && sMenuKeyDown) {
             sMenuKeyDown = false;
-            if (sPage == PAGE_STATIONS && APRS_StationCount())
+            if (sPage == PAGE_STATIONS && APRS_StationCount() && !KISS_IsActive())
                 sAprsDetail = true;
             sDirty = true;
         }
@@ -813,6 +855,7 @@ static void RenderAprsDetail(const AprsStation *st)
 #define X_ENVELOPE  98
 #define X_SPEAKER   110     // 109-121 while inverted
 #define X_BATTERY   123     // to the right edge
+#define KISS_TOP_PAGE 3     // KISS: under the big frequency (pages 1-2)
 #define PAGE_NUM_W  11      // "2/4", right-aligned on the second line
 #define METER_W     30      // ten bars, left of the page number
 #define X_METER     (LCD_WIDTH - PAGE_NUM_W - 2 - METER_W)
@@ -821,6 +864,19 @@ static void DrawIcon(uint8_t x, const uint8_t *cols, uint8_t w)
 {
     for (uint8_t i = 0; i < w; i++)
         gFrameBuffer[0][x + i] |= cols[i];
+}
+
+// KISS: data on the cable, after "KISS": an up arrow while frames go up to
+// the computer, a down arrow while the computer sends down to the radio.
+static void DrawCableActivity(uint8_t x)
+{
+    static const uint8_t UP[7]   = { 0x20, 0x30, 0x38, 0x3C, 0x38, 0x30, 0x20 };
+    static const uint8_t DOWN[7] = { 0x04, 0x0C, 0x1C, 0x3C, 0x1C, 0x0C, 0x04 };
+    const uint8_t a = KISS_Activity();
+    if (a & KISS_TO_HOST)
+        DrawIcon(x, UP, sizeof UP);
+    if (a & KISS_FROM_HOST)
+        DrawIcon((uint8_t)(x + sizeof UP + 2), DOWN, sizeof DOWN);
 }
 
 static void DrawStationIcons(uint8_t flags, bool can_tx)
@@ -883,34 +939,45 @@ static void DrawPageNumber(uint8_t page)
             gFrameBuffer[page][x + i] |= TINY[glyphs[g]][i];
 }
 
+// What has been typed so far, with the implied point and a '-' cursor.
+static void FormatEntry(char *buf)
+{
+    const char *mhz, *frac;
+    uint8_t mhz_len, frac_len, n = 0;
+    SplitEntry(&mhz, &mhz_len, &frac, &frac_len);
+    memcpy(buf + n, mhz, mhz_len);
+    n += mhz_len;
+    if (frac_len || memchr(sEntry, '.', sEntryLen))
+        buf[n++] = '.';
+    memcpy(buf + n, frac, frac_len);
+    n += frac_len;
+    buf[n++] = '-';
+    buf[n] = '\0';
+}
+
+// Memory mode: the memory's name, or "MEM 3" if it has none.
+static void MemoryLabel(char name[MEM_NAME_LEN + 1])
+{
+    MemoryName(name);
+    if (!name[0]) {
+        strcpy(name, "MEM ");
+        name[4] = (char)('0' + gSettings.memory - 1);
+        name[5] = '\0';
+    }
+}
+
 static void DrawFrequencyLine(void)
 {
     char buf[ENTRY_MAX + 2];
     if (sEntryLen) {
-        // what has been typed so far, with the implied point, and a '-' cursor
-        const char *mhz, *frac;
-        uint8_t mhz_len, frac_len, n = 0;
-        SplitEntry(&mhz, &mhz_len, &frac, &frac_len);
-        memcpy(buf + n, mhz, mhz_len);
-        n += mhz_len;
-        if (frac_len || memchr(sEntry, '.', sEntryLen))
-            buf[n++] = '.';
-        memcpy(buf + n, frac, frac_len);
-        n += frac_len;
-        buf[n++] = '-';
-        buf[n] = '\0';
+        FormatEntry(buf);
         GFX_Text(0, 1, buf);
         GFX_TextRight(LCD_WIDTH - 1, 1, GFX_KEY_MENU " OK " GFX_KEY_EXIT " DEL");
         return;
     }
     if (gSettings.memory) {                     // memory mode: the memory's name
         char name[MEM_NAME_LEN + 1];
-        MemoryName(name);
-        if (!name[0]) {
-            strcpy(name, "MEM ");
-            name[4] = (char)('0' + gSettings.memory - 1);
-            name[5] = '\0';
-        }
+        MemoryLabel(name);
         GFX_Text(0, 1, name);
     } else {                                    // frequency mode: the frequency
         FormatMHz(gSettings.frequency, buf);
@@ -918,6 +985,30 @@ static void DrawFrequencyLine(void)
     }
     DrawMeter(1, X_METER, METER_W);
     DrawPageNumber(1);
+}
+
+// KISS: the frequency in big digits (or the memory's name, double size) on
+// pages 1-2; at the right the meter, and whether the channel is busy.
+static void DrawKissFrequency(void)
+{
+    char buf[ENTRY_MAX + 2];
+    if (sEntryLen) {
+        FormatEntry(buf);
+        GFX_BigDigitsShort(0, 1, buf);
+        GFX_TextRight(LCD_WIDTH - 1, 1, GFX_KEY_MENU " OK");
+        GFX_TextRight(LCD_WIDTH - 1, 2, GFX_KEY_EXIT " DEL");
+        return;
+    }
+    if (gSettings.memory) {
+        char name[MEM_NAME_LEN + 1];
+        MemoryLabel(name);
+        GFX_TextDouble(0, 9, name);
+    } else {
+        FormatMHz(gSettings.frequency, buf);
+        GFX_BigDigitsShort(0, 1, buf);
+    }
+    DrawMeter(1, LCD_WIDTH - METER_W, METER_W);
+    GFX_TextRight(LCD_WIDTH - 1, 2, CHANNEL_IsBusy() ? "busy" : "clear");
 }
 
 // Two lines on the pages; one in the settings and while typing a message.
@@ -929,20 +1020,26 @@ static bool TwoLineStatus(void)
 static void DrawStatusBar(void)
 {
     char buf[10];
-    GFX_TextBold(0, 0, KISS_IsActive() ? "KISS" : MyCall(buf) ? buf : "NO CALL");
+    const uint8_t x = GFX_TextBold(0, 0, KISS_IsActive() ? "KISS" : MyCall(buf) ? buf : "NO CALL");
+    if (KISS_IsActive())
+        DrawCableActivity((uint8_t)(x + 2));
 #ifdef ENABLE_TX
     const bool can_tx = TX_IsAllowedFrequency(gSettings.frequency);
 #else
     const bool can_tx = false;
 #endif
-    DrawStationIcons(STATION_Get()->flags, can_tx);
+    if (!KISS_IsActive())                       // paused in KISS: the computer is the station
+        DrawStationIcons(STATION_Get()->flags, can_tx);
     if (MSG_Unread() && (APRS_NowSeconds() & 1)) {   // blinking envelope: unread messages (F opens them)
         static const uint8_t ENVELOPE[9] = { 0x7F, 0x43, 0x45, 0x49, 0x51, 0x49, 0x45, 0x43, 0x7F };
         memcpy(&gFrameBuffer[0][X_ENVELOPE], ENVELOPE, sizeof ENVELOPE);
     }
     DrawSpeaker(X_SPEAKER);
     DrawBattery();
-    if (TwoLineStatus()) {
+    if (KISS_IsActive() && !MENU_IsOpen()) {
+        DrawKissFrequency();
+        GFX_HLine(0, LCD_WIDTH - 1, KISS_TOP_PAGE * 8);
+    } else if (TwoLineStatus()) {
         DrawFrequencyLine();
         GFX_HLine(0, LCD_WIDTH - 1, APP_TOP_PAGE * 8);   // the divider
     } else {
@@ -986,7 +1083,7 @@ static void RenderRadio(void)
     char sent[12] = "";
 #ifdef ENABLE_TX
     strcpy(sent, "Sent ");
-    AppendInt(sent, gTxStats.attempts, "");
+    AppendInt(sent, gTxStats.sent, "");
 #endif
     InfoRow(b + 1, buf, sent);
 
@@ -1031,11 +1128,46 @@ static void RenderPacket(void)
     GFX_Divide(head);
 }
 
+// KISS page, the only page while KISS is on: under the big frequency
+// (DrawKissFrequency), frames on air and from the computer as a 2 x 2 grid,
+// labels over values.
+static void KissCell(uint8_t x, uint8_t page, const char *label, int32_t value)
+{
+    char buf[8] = "";
+    AppendInt(buf, value, "");
+    GFX_Text(x, page, label);
+    GFX_TextBold(x, (uint8_t)(page + 1), buf);
+}
+
+static void RenderKiss(void)
+{
+    const uint8_t p = KISS_TOP_PAGE, x2 = LCD_WIDTH / 2 + 4;
+    const KissStats *k = KISS_GetStats();
+    KissCell(0, p, "Heard", APRS_TotalDecoded());      // on air (all go to the computer)
+#ifdef ENABLE_TX
+    KissCell(x2, p, "Sent", gTxStats.sent);            // on air (before KISS: beacons, digipeats too)
+#endif
+    KissCell(0, p + 2, "From PC", k->from_host);
+    KissCell(x2, p + 2, "Refused", k->refused + TXQ_HostRefused());   // here, or by the transmitter
+    // Spread over the space down to the bottom: 3 px under the divider, 2 px
+    // from each label to its value, 3 px between the rows (bottom at row 61).
+    // Bottom up, so each shift starts on a page boundary, before anything
+    // above it has moved.
+    GFX_ShiftDown1(p + 3);
+    GFX_ShiftDown1(p + 2);
+    GFX_ShiftDown1(p + 2);
+    GFX_ShiftDown1(p + 1);
+    GFX_ShiftDown1(p);
+    GFX_Lower(p);
+}
+
 static void Render(void)
 {
     GFX_Clear();
     if (MENU_IsOpen())
         MENU_Render();
+    else if (KISS_IsActive())
+        RenderKiss();
     else if (sPage == PAGE_MESSAGES)
         INBOX_Render();
     else if (sPage == PAGE_RADIO)
@@ -1130,6 +1262,9 @@ void APP_Init(void)
     sSavedFrequency = gSettings.frequency;
     sSavedMemory    = gSettings.memory;
     sSavedListMode  = gSettings.list_by_distance;
+    sSavedKiss      = gSettings.kiss;
+    if (gSettings.kiss)
+        KISS_Enter();   // it was on at power-off: a computer is probably still attached
     Render();
 }
 
@@ -1142,10 +1277,23 @@ void APP_Tick10ms(void)
         HandleKey(ev);
     }
 
-    if (KISS_IsActive())
+    static bool wasKiss;
+    if (KISS_IsActive() != wasKiss) {   // hold *, the console or the computer
+        wasKiss = KISS_IsActive();
+        if (wasKiss)
+            SetPage(PAGE_STATIONS);     // closes a message being written, the details
+        sDirty = true;
+    }
+    if (KISS_IsActive()) {
+        static uint8_t shown;           // redraw as the cable arrows come and go
         KISS_Poll10ms();
-    else
+        if (KISS_Activity() != shown) {
+            shown = KISS_Activity();
+            APP_Redraw();
+        }
+    } else {
         CONSOLE_Poll();
+    }
     const bool beeping = BEEP_IsPlaying();   // the BK4819 is out of receive: leave it alone
     if (!beeping)
         TXQ_Poll10ms();
@@ -1203,8 +1351,10 @@ void APP_Tick10ms(void)
     static uint32_t lastSecond;
     if (APRS_NowSeconds() != lastSecond) {
         lastSecond = APRS_NowSeconds();   // keep the "heard ... ago" ages current
-        BEACON_Poll1s(lastSecond);
-        MSG_Poll1s(lastSecond);
+        if (!KISS_IsActive()) {         // in KISS the computer is the station
+            BEACON_Poll1s(lastSecond);  // (paused, not switched off: both carry on after)
+            MSG_Poll1s(lastSecond);     // retries of our messages
+        }
         STORE_Poll1s(lastSecond);
         sDirty = true;
     }
@@ -1224,13 +1374,16 @@ void APP_Tick10ms(void)
     if (sBacklightTicks && --sBacklightTicks == 0)
         BOARD_SetBacklight(0);
 
-    // Remember the frequency (keys, console or KISS), once it has settled.
+    // Remember the frequency (keys, console or KISS) and whether KISS is on,
+    // once they have settled.
     CheckMemoryMode();
+    gSettings.kiss = KISS_IsActive();
     if (gSettings.frequency != sSavedFrequency || gSettings.memory != sSavedMemory
-        || gSettings.list_by_distance != sSavedListMode) {
+        || gSettings.list_by_distance != sSavedListMode || gSettings.kiss != sSavedKiss) {
         sSavedFrequency = gSettings.frequency;
         sSavedMemory    = gSettings.memory;
         sSavedListMode  = gSettings.list_by_distance;
+        sSavedKiss      = gSettings.kiss;
         sSaveTicks      = SAVE_DELAY_TICKS;
     }
     if (sSaveTicks && --sSaveTicks == 0)

@@ -1,5 +1,9 @@
 """Talk to the K5-APRS debug console over the programming cable.
 
+If the radio is in KISS mode (it stays in KISS across power-off), opening
+the console takes it out (C0 FF C0) and closing puts it back (`k`), so
+commands work whichever mode it was in.
+
 As a library:
     with K5Console("/dev/cu.usbserial-XXXX") as k:
         k.write_reg(0x58, 0x37C3)
@@ -17,8 +21,12 @@ import time
 import serial
 
 
+KISS_RETURN = bytes([0xC0, 0xFF, 0xC0])      # KISS "return": back to the console
+
+
 class K5Console:
-    def __init__(self, port: str, baud: int = 38400, raw_log: str | None = None):
+    def __init__(self, port: str, baud: int = 38400, raw_log: str | None = None,
+                 leave_kiss: bool = True):
         self.ser = serial.Serial(port, baud, timeout=0.05)
         # optional: every received byte with a timestamp, for debugging the link
         self._raw = open(raw_log, "a") if raw_log else None
@@ -26,6 +34,29 @@ class K5Console:
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._reader, daemon=True)
         self._thread.start()
+        self.was_kiss = False                   # True: put back in KISS on close()
+        if leave_kiss:
+            self._leave_kiss()
+
+    def _leave_kiss(self) -> None:
+        """If the console doesn't answer, the radio is probably in KISS mode:
+        send KISS "return" and try again. Remembers to restore KISS later."""
+        try:
+            self.command("v", "V", timeout=0.5)
+            return
+        except TimeoutError:
+            pass
+        for _ in range(2):                      # once more if the first is lost
+            self.ser.write(KISS_RETURN)
+            self.ser.flush()
+            time.sleep(0.2)
+            try:
+                self.command("v", "V", timeout=1.0)
+            except TimeoutError:
+                continue
+            self.was_kiss = True
+            return
+        # no radio, or not K5-APRS: the commands will say so
 
     # ------------------------------------------------------------ plumbing
 
@@ -44,6 +75,13 @@ class K5Console:
                     self.lines.put((time.time(), line))
 
     def close(self) -> None:
+        if self.was_kiss:                       # as we found it
+            try:
+                self.send("k")
+                self.ser.flush()
+                time.sleep(0.1)
+            except serial.SerialException:
+                pass
         self._stop.set()
         self._thread.join(timeout=1)
         self.ser.close()

@@ -46,6 +46,7 @@ typedef struct {
     uint16_t attempts;
     uint8_t  last_result;     // TxResult
     uint16_t last_ms;         // on-air time of the last attempt, 0 if refused
+    uint16_t sent;            // attempts that went out (TX_OK)
 } TxStats;
 
 extern TxStats gTxStats;

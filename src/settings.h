@@ -38,7 +38,7 @@ typedef struct {
     uint8_t  backlight;   // 0..255
     uint8_t  memory;      // 0 = frequency mode, 1..10 = memory mode on memory 0..9
     uint8_t  list_by_distance;   // station list: 0 = most recent first, 1 = nearest first
-    uint8_t  reserved;
+    uint8_t  kiss;        // 1 = KISS TNC on: back on at power-on (was reserved, 0)
 } Settings_t;
 
 _Static_assert(sizeof(Settings_t) == 16, "Settings_t must be two EEPROM pages");

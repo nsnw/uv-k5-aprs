@@ -52,7 +52,7 @@ static const char *sLastLine = "";
 static uint32_t sLastHeard_s;
 const char *APRS_LastPacket(uint32_t *heard_s) { *heard_s = sLastHeard_s; return sLastLine; }
 bool CHANNEL_IsBusy(void) { return sRx; }
-TxStats gTxStats = { .attempts = 4 };
+TxStats gTxStats = { .attempts = 4, .sent = 4 };
 uint32_t BEACON_SecondsToNext(uint32_t now_s) { (void)now_s; return (sS.flags & STATION_AUTOBEACON) ? 754 : 0; }
 void BATTERY_Sample(void) {}
 void CHANNEL_ObserveRssi(int16_t d) { (void)d; }
@@ -61,11 +61,16 @@ bool KISS_IsActive(void) { return sKiss; }
 void KISS_Enter(void) { sKiss = true; }
 void KISS_Exit(void) { sKiss = false; }
 void KISS_Poll10ms(void) {}
+static uint8_t sKissActivity;
+uint8_t KISS_Activity(void) { return sKissActivity; }
+static KissStats sKissStats = { .from_host = 12, .refused = 1 };
+const KissStats *KISS_GetStats(void) { return &sKissStats; }
 void CONSOLE_Poll(void) {}
 KeyEvent_t INPUT_Poll10ms(void) { return (KeyEvent_t){ KEV_NONE, 0 }; }
 void TXQ_Poll10ms(void) {}
 uint8_t TXQ_Count(void) { return 0; }
 bool TXQ_TakeLocalSent(void) { return false; }
+uint16_t TXQ_HostRefused(void) { return 0; }
 bool TX_IsAllowedFrequency(uint32_t f) { return f >= 14400000 && f <= 14800000; }
 void BEEP_Request(BeepKind k) { (void)k; }
 bool BEEP_Poll10ms(bool q) { (void)q; return false; }
@@ -101,6 +106,14 @@ static void Save(const char *name)
     if (!f) { perror(path); exit(1); }
     fwrite(sShown, 1, sizeof sShown, f);
     fclose(f);
+}
+
+static void Expect(bool ok, const char *what)
+{
+    if (!ok) {
+        fprintf(stderr, "FAIL: %s\n", what);
+        exit(1);
+    }
 }
 
 static void Shot(const char *name) { Render(); Save(name); }
@@ -280,6 +293,42 @@ int main(int argc, char **argv)
 
     sKiss = true;
     Shot("24-kiss");
+    sKissStats.refused = 0;
+    sRx = true;
+    sKissActivity = KISS_TO_HOST;
+    Shot("24a-kiss-receiving");
+    sKissActivity = KISS_TO_HOST | KISS_FROM_HOST;
+    Shot("24c-kiss-both");
+    sKissActivity = 0;
+    sRx = false;
+    sKissStats.refused = 1;
+    gSettings.memory = 1;
+    Shot("24b-kiss-memory");
+    gSettings.memory = 0;
+
+    // KISS keys (checked, not shot): UP / DOWN step through the memories,
+    // wrapping and skipping empty slots; SIDE / F stay on the page.
+    MEM_Set(3, 14550000, "S20   ");
+    MEM_Set(7, 14652000, "SIMPLX");
+    const uint32_t f0 = gSettings.frequency;   // 144.390, memory 0
+    Press(KEY_UP);   Expect(gSettings.frequency == 14550000, "KISS UP: memory 3");
+    Press(KEY_UP);   Expect(gSettings.frequency == 14652000, "KISS UP: memory 7");
+    Press(KEY_UP);   Expect(gSettings.frequency == f0, "KISS UP: wraps to memory 0");
+    Press(KEY_DOWN); Expect(gSettings.frequency == 14652000, "KISS DOWN: wraps to memory 7");
+    Expect(gSettings.memory == 0, "frequency mode stays frequency mode");
+    gSettings.memory = 8;
+    Press(KEY_DOWN); Expect(gSettings.memory == 4 && gSettings.frequency == 14550000, "memory mode: DOWN selects memory 3");
+    gSettings.memory = 0;
+    APP_SetFrequency(14600000);                // on no memory: UP starts at the first
+    Press(KEY_UP);   Expect(gSettings.frequency == f0, "KISS UP off a memory: memory 0");
+    const uint8_t page = sPage;
+    sMessage = NULL;
+    Press(KEY_SIDE2); Expect(sPage == page && sMessage && !strcmp(sMessage, "HOLD * FOR APRS"), "KISS: SIDE2 stays");
+    sMessage = NULL;
+    Press(KEY_F);     Expect(sPage == page && !INBOX_IsOpen() && sMessage, "KISS: F stays");
+    sMessage = NULL;
+    MEM_Clear(3);
+    MEM_Clear(7);
     sKiss = false;
 
     // ---- empty: just switched on

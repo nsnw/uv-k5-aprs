@@ -21,6 +21,10 @@ bool TXQ_Push(const uint8_t *frame, uint16_t len);
 // sent, TXQ_TakeLocalSent() returns true (once), for the TX beep.
 bool TXQ_PushLocal(const uint8_t *frame, uint16_t len);
 bool TXQ_TakeLocalSent(void);
+// Frames from the KISS host: counted when TX_SendFrame refuses them
+// (frequency, time on air ...), for the KISS page.
+bool     TXQ_PushHost(const uint8_t *frame, uint16_t len);
+uint16_t TXQ_HostRefused(void);
 void TXQ_Poll10ms(void);
 void TXQ_Clear(void);
 uint8_t TXQ_Count(void);
