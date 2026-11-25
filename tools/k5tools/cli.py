@@ -157,7 +157,7 @@ def flash(ctx: click.Context, image: Path | None, retries: int, version_string: 
             raise click.ClickException(
                 f"lost the serial connection ({e}). The radio stays in bootloader mode if "
                 "flashing was interrupted; check the cable, then run `k5 flash` again.")
-    click.echo("done. Switch the radio off and on to start the new firmware.")
+    click.echo("done. The radio restarts into the new firmware by itself.")
 
 
 @cli.command()
